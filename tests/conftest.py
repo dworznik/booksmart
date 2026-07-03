@@ -12,7 +12,8 @@ import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import Engine, create_engine, text
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
 from app.main import create_app
@@ -54,10 +55,23 @@ def settings(database_url: str, tmp_path: Path) -> Settings:
 def client(settings: Settings, database_url: str) -> Iterator[TestClient]:
     engine = create_engine(database_url)
     with engine.connect() as conn:
-        conn.execute(text("TRUNCATE TABLE books"))
+        conn.execute(text("TRUNCATE TABLE books CASCADE"))
         conn.commit()
     engine.dispose()
 
     app = create_app(settings)
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture()
+def db_engine(database_url: str) -> Iterator[Engine]:
+    engine = create_engine(database_url)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture()
+def session_factory(db_engine: Engine) -> sessionmaker[Session]:
+    """Session factory for driving the worker synchronously in tests."""
+    return sessionmaker(bind=db_engine)

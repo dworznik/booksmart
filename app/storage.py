@@ -1,4 +1,8 @@
-"""Filesystem object storage (v1). Originals live under storage/books/<book_id>/."""
+"""Filesystem object storage (v1).
+
+Originals live under storage/books/<book_id>/; parsed Markdown under
+storage/parsed/<book_id>/<job_id>.md.
+"""
 
 import hashlib
 import shutil
@@ -20,6 +24,7 @@ class StoredFile:
 class BookStorage:
     def __init__(self, storage_root: Path) -> None:
         self._books_dir = storage_root / "books"
+        self._parsed_dir = storage_root / "parsed"
 
     def save_original(self, book_id: uuid.UUID, filename: str, stream: BinaryIO) -> StoredFile:
         """Stream the upload to disk, computing MD5 checksum and SHA-256 hash on the way."""
@@ -41,6 +46,13 @@ class BookStorage:
             raise
 
         return StoredFile(path=target, checksum=md5.hexdigest(), file_hash=sha256.hexdigest())
+
+    def save_parsed(self, book_id: uuid.UUID, job_id: uuid.UUID, markdown: str) -> Path:
+        parsed_dir = self._parsed_dir / str(book_id)
+        parsed_dir.mkdir(parents=True, exist_ok=True)
+        target = parsed_dir / f"{job_id}.md"
+        target.write_text(markdown, encoding="utf-8")
+        return target
 
     def discard(self, book_id: uuid.UUID) -> None:
         shutil.rmtree(self._books_dir / str(book_id), ignore_errors=True)

@@ -13,6 +13,18 @@ services:
         condition: service_healthy
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
+  knowledge-worker:
+    build: .
+    environment:
+      BOOKSMART_DATABASE_URL: postgresql+psycopg://booksmart:booksmart@postgres:5432/booksmart
+      BOOKSMART_STORAGE_ROOT: /data/storage
+    volumes:
+      - ./storage:/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: python -m app.worker
+
   postgres:
     image: postgres:17
     environment:

@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings
-from app.routers import books
+from app.routers import books, jobs
 from app.storage import BookStorage
 
 
@@ -24,6 +24,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.session_factory = sessionmaker(bind=app.state.engine)
     app.state.storage = BookStorage(settings.storage_root)
     app.include_router(books.router)
+    app.include_router(jobs.router)
     return app
 
 
