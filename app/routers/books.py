@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import Book
-from app.schemas import BookOut
+from app.schemas import BookOut, BookUpdate
 from app.storage import BookStorage
 
 router = APIRouter(prefix="/books", tags=["books"])
@@ -58,6 +58,13 @@ def register_book(
     edition: Annotated[str | None, Form()] = None,
     publication_year: Annotated[int | None, Form()] = None,
     isbn: Annotated[str | None, Form()] = None,
+    primary_topic: Annotated[str | None, Form()] = None,
+    language: Annotated[str | None, Form()] = None,
+    framework: Annotated[str | None, Form()] = None,
+    methodology: Annotated[str | None, Form()] = None,
+    notes: Annotated[str | None, Form()] = None,
+    trust_level: Annotated[str | None, Form()] = None,
+    intended_use: Annotated[str | None, Form()] = None,
     db: Session = Depends(get_db),
     storage: BookStorage = Depends(_storage),
 ) -> Book:
@@ -72,6 +79,13 @@ def register_book(
         edition=edition,
         publication_year=publication_year,
         isbn=isbn,
+        primary_topic=primary_topic,
+        language=language,
+        framework=framework,
+        methodology=methodology,
+        notes=notes,
+        trust_level=trust_level,
+        intended_use=intended_use,
         original_filename=stored.path.name,
         file_format=file_format,
         storage_path=str(stored.path),
@@ -99,4 +113,19 @@ def get_book(book_id: uuid.UUID, db: Session = Depends(get_db)) -> Book:
     book = db.get(Book, book_id)
     if book is None:
         raise HTTPException(status_code=404, detail="Book not found")
+    return book
+
+
+@router.patch("/{book_id}", response_model=BookOut)
+def update_book(
+    book_id: uuid.UUID, payload: BookUpdate, db: Session = Depends(get_db)
+) -> Book:
+    """Update metadata and hints. Books stay editable in any state, forever."""
+    book = db.get(Book, book_id)
+    if book is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+    for field, value in payload.changes().items():
+        setattr(book, field, value)
+    db.commit()
+    db.refresh(book)
     return book

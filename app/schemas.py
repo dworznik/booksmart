@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class BookOut(BaseModel):
@@ -13,8 +14,50 @@ class BookOut(BaseModel):
     edition: str | None
     publication_year: int | None
     isbn: str | None
+    primary_topic: str | None
+    language: str | None
+    framework: str | None
+    methodology: str | None
+    notes: str | None
+    trust_level: str | None
+    intended_use: str | None
     original_filename: str
     file_format: str
     checksum: str
     file_hash: str
     uploaded_at: datetime
+
+
+class BookUpdate(BaseModel):
+    """Partial update: only fields present in the request body are applied.
+
+    File fields (checksum, file_hash, original_filename, file_format,
+    storage_path, uploaded_at) are never editable, so extra fields are
+    rejected outright.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: Annotated[str, Field(min_length=1)] | None = None
+    author: Annotated[str, Field(min_length=1)] | None = None
+    edition: str | None = None
+    publication_year: int | None = None
+    isbn: str | None = None
+    primary_topic: str | None = None
+    language: str | None = None
+    framework: str | None = None
+    methodology: str | None = None
+    notes: str | None = None
+    trust_level: str | None = None
+    intended_use: str | None = None
+
+    @model_validator(mode="after")
+    def _reject_null_required_fields(self) -> "BookUpdate":
+        for field in ("title", "author"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null")
+        return self
+
+    def changes(self) -> dict[str, object]:
+        """Only the fields explicitly provided in the request body."""
+        return self.model_dump(exclude_unset=True)
