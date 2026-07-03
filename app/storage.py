@@ -1,0 +1,46 @@
+"""Filesystem object storage (v1). Originals live under storage/books/<book_id>/."""
+
+import hashlib
+import shutil
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+from typing import BinaryIO
+
+CHUNK_SIZE = 1024 * 1024
+
+
+@dataclass(frozen=True)
+class StoredFile:
+    path: Path
+    checksum: str
+    file_hash: str
+
+
+class BookStorage:
+    def __init__(self, storage_root: Path) -> None:
+        self._books_dir = storage_root / "books"
+
+    def save_original(self, book_id: uuid.UUID, filename: str, stream: BinaryIO) -> StoredFile:
+        """Stream the upload to disk, computing MD5 checksum and SHA-256 hash on the way."""
+        book_dir = self._books_dir / str(book_id)
+        book_dir.mkdir(parents=True, exist_ok=True)
+        # Uploads may carry path separators in the client-supplied name; keep only the basename.
+        target = book_dir / Path(filename).name
+
+        md5 = hashlib.md5()
+        sha256 = hashlib.sha256()
+        try:
+            with target.open("wb") as out:
+                while chunk := stream.read(CHUNK_SIZE):
+                    md5.update(chunk)
+                    sha256.update(chunk)
+                    out.write(chunk)
+        except Exception:
+            shutil.rmtree(book_dir, ignore_errors=True)
+            raise
+
+        return StoredFile(path=target, checksum=md5.hexdigest(), file_hash=sha256.hexdigest())
+
+    def discard(self, book_id: uuid.UUID) -> None:
+        shutil.rmtree(self._books_dir / str(book_id), ignore_errors=True)

@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+
+# Object storage contents stay local; keep the layout tracked via .gitkeep
+storage/*/*
+!storage/*/.gitkeep
+
+.env

@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: booksmart
+          POSTGRES_PASSWORD: booksmart
+          POSTGRES_DB: booksmart
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U booksmart -d booksmart"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Typecheck
+        run: uv run mypy
+
+      - name: Test
+        run: uv run pytest -q
