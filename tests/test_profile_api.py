@@ -71,8 +71,11 @@ class TestProfileGenerationStage:
 
         ingest(client, session_factory, settings, book_id)
 
-        assert len(stub_llm.calls) == 1
-        prompt, system = stub_llm.calls[0]
+        from app.profile import PROFILE_SYSTEM_PROMPT
+
+        profile_calls = [(p, s) for p, s in stub_llm.calls if s == PROFILE_SYSTEM_PROMPT]
+        assert len(profile_calls) == 1
+        prompt, system = profile_calls[0]
         assert system  # the stage identifies itself to the model
         assert "A Philosophy of Software Design" in prompt
         assert "John Ousterhout" in prompt

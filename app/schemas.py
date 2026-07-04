@@ -93,6 +93,27 @@ class BookProfileOut(BaseModel):
     created_at: datetime
 
 
+class KnowledgeObjectOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    book_id: uuid.UUID
+    chapter_id: uuid.UUID | None
+    section_id: uuid.UUID | None
+    type: str
+    title: str
+    content: str
+    summary: str
+    source_location: str
+    confidence: float
+    edition: str | None
+    page: int | None
+    paragraph: int | None
+    extraction_model: str
+    extraction_prompt_version: str
+    created_at: datetime
+
+
 class IngestionJobOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
