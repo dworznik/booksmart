@@ -8,8 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Book
-from app.schemas import BookOut, BookUpdate
+from app.models import Book, Chapter
+from app.schemas import BookOut, BookUpdate, ChapterOut
 from app.storage import BookStorage
 
 router = APIRouter(prefix="/books", tags=["books"])
@@ -114,6 +114,17 @@ def get_book(book_id: uuid.UUID, db: Session = Depends(get_db)) -> Book:
     if book is None:
         raise HTTPException(status_code=404, detail="Book not found")
     return book
+
+
+@router.get("/{book_id}/structure", response_model=list[ChapterOut])
+def get_book_structure(book_id: uuid.UUID, db: Session = Depends(get_db)) -> list[Chapter]:
+    if db.get(Book, book_id) is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+    return list(
+        db.scalars(
+            select(Chapter).where(Chapter.book_id == book_id).order_by(Chapter.position)
+        )
+    )
 
 
 @router.patch("/{book_id}", response_model=BookOut)

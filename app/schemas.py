@@ -63,6 +63,25 @@ class BookUpdate(BaseModel):
         return self.model_dump(exclude_unset=True)
 
 
+class SectionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    position: int
+    title: str
+    source_line: int | None
+
+
+class ChapterOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    position: int
+    title: str
+    source_line: int | None
+    sections: list[SectionOut]
+
+
 class IngestionJobOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

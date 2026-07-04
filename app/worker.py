@@ -8,16 +8,18 @@ storage/logs/. Run with `python -m app.worker`.
 """
 
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
-from app.models import Book, IngestionJob
+from app.models import Book, Chapter, IngestionJob, Section
 from app.parsing import ParserChain, build_default_chain
 from app.storage import BookStorage
+from app.structure import detect_structure
 
 POLL_INTERVAL_SECONDS = 1.0
 
@@ -33,6 +35,38 @@ def _claim_next_job(session: Session) -> IngestionJob | None:
         .limit(1)
         .with_for_update(skip_locked=True)
     ).first()
+
+
+def _detect_and_replace_structure(
+    session: Session, book: Book, markdown: str, log: Callable[[str], None]
+) -> None:
+    """Structure detection stage: replace the book's chapter/section tree."""
+    log("structure: detecting chapters and sections")
+    try:
+        detected = detect_structure(markdown)
+        session.execute(delete(Chapter).where(Chapter.book_id == book.id))
+        for chapter_position, chapter in enumerate(detected):
+            session.add(
+                Chapter(
+                    book_id=book.id,
+                    position=chapter_position,
+                    title=chapter.title,
+                    source_line=chapter.line,
+                    sections=[
+                        Section(
+                            position=section_position,
+                            title=section.title,
+                            source_line=section.line,
+                        )
+                        for section_position, section in enumerate(chapter.sections)
+                    ],
+                )
+            )
+        section_count = sum(len(chapter.sections) for chapter in detected)
+        log(f"structure: {len(detected)} chapters, {section_count} sections")
+    except Exception as exc:
+        log(f"structure: failed — {type(exc).__name__}: {exc}")
+        raise RuntimeError(f"structure detection stage failed: {exc}") from exc
 
 
 def process_one_job(
@@ -63,8 +97,12 @@ def process_one_job(
             result = chain.extract(Path(book.storage_path), book.file_format, log)
             job.output_path = str(storage.save_parsed(book.id, job.id, result.markdown))
             job.parser_used = result.parser
+            _detect_and_replace_structure(session, book, result.markdown, log)
             job.status = "succeeded"
         except Exception as exc:
+            # Discard partial stage writes (e.g. a structure delete whose
+            # replacement inserts never landed) before recording the failure.
+            session.rollback()
             job.status = "failed"
             job.error = f"{type(exc).__name__}: {exc}"
         job.finished_at = datetime.now(UTC)
