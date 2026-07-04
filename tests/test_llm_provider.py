@@ -6,13 +6,21 @@ from typing import Any
 import pytest
 
 from app.config import Settings
-from app.llm import AnthropicProvider, OpenAIProvider, build_llm_provider
+from app.llm import (
+    GEMINI_BASE_URL,
+    AnthropicProvider,
+    GeminiProvider,
+    LLMError,
+    OpenAIProvider,
+    build_llm_provider,
+)
 
 
 def make_settings(**overrides: Any) -> Settings:
     defaults: dict[str, Any] = {
         "anthropic_api_key": "sk-ant-test",
         "openai_api_key": "sk-openai-test",
+        "gemini_api_key": "sk-gemini-test",
     }
     defaults.update(overrides)
     return Settings(**defaults)
@@ -31,6 +39,13 @@ class TestProviderSelection:
         assert isinstance(provider, OpenAIProvider)
         assert provider.model == "gpt-5.5"
 
+    def test_gemini_provider_selected_via_configuration(self) -> None:
+        provider = build_llm_provider(make_settings(llm_provider="gemini"))
+
+        assert isinstance(provider, GeminiProvider)
+        assert provider.model == "gemini-2.5-pro"
+        assert str(provider._client.base_url) == GEMINI_BASE_URL
+
     def test_configured_model_overrides_provider_default(self) -> None:
         provider = build_llm_provider(
             make_settings(llm_provider="anthropic", llm_model="claude-sonnet-5")
@@ -45,7 +60,6 @@ class TestProviderSelection:
 
 class TestAnthropicProvider:
     def test_complete_sends_prompt_and_joins_text_blocks(self) -> None:
-        provider = AnthropicProvider(model="claude-opus-4-8", api_key="sk-ant-test")
         captured: dict[str, Any] = {}
 
         def fake_create(**kwargs: Any) -> Any:
@@ -60,8 +74,9 @@ class TestAnthropicProvider:
                 ],
             )
 
-        provider._client = SimpleNamespace(  # type: ignore[assignment]
-            messages=SimpleNamespace(create=fake_create)
+        provider = AnthropicProvider(
+            model="claude-opus-4-8",
+            client=SimpleNamespace(messages=SimpleNamespace(create=fake_create)),  # type: ignore[arg-type]
         )
 
         response = provider.complete("Describe the book.", system="You are a librarian.")
@@ -73,22 +88,23 @@ class TestAnthropicProvider:
         assert captured["messages"] == [{"role": "user", "content": "Describe the book."}]
 
     def test_refusal_stop_reason_raises(self) -> None:
-        provider = AnthropicProvider(model="claude-opus-4-8", api_key="sk-ant-test")
-        provider._client = SimpleNamespace(  # type: ignore[assignment]
-            messages=SimpleNamespace(
-                create=lambda **kwargs: SimpleNamespace(
-                    model="claude-opus-4-8", stop_reason="refusal", content=[]
+        provider = AnthropicProvider(
+            model="claude-opus-4-8",
+            client=SimpleNamespace(  # type: ignore[arg-type]
+                messages=SimpleNamespace(
+                    create=lambda **kwargs: SimpleNamespace(
+                        model="claude-opus-4-8", stop_reason="refusal", content=[]
+                    )
                 )
-            )
+            ),
         )
 
-        with pytest.raises(RuntimeError, match="refus"):
+        with pytest.raises(LLMError, match="refus"):
             provider.complete("Describe the book.")
 
 
 class TestOpenAIProvider:
     def test_complete_sends_prompt_and_reads_first_choice(self) -> None:
-        provider = OpenAIProvider(model="gpt-5.5", api_key="sk-openai-test")
         captured: dict[str, Any] = {}
 
         def fake_create(**kwargs: Any) -> Any:
@@ -98,8 +114,11 @@ class TestOpenAIProvider:
                 choices=[SimpleNamespace(message=SimpleNamespace(content="The profile."))],
             )
 
-        provider._client = SimpleNamespace(  # type: ignore[assignment]
-            chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
+        provider = OpenAIProvider(
+            model="gpt-5.5",
+            client=SimpleNamespace(  # type: ignore[arg-type]
+                chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
+            ),
         )
 
         response = provider.complete("Describe the book.", system="You are a librarian.")
@@ -113,14 +132,16 @@ class TestOpenAIProvider:
         ]
 
     def test_empty_completion_raises(self) -> None:
-        provider = OpenAIProvider(model="gpt-5.5", api_key="sk-openai-test")
-        provider._client = SimpleNamespace(  # type: ignore[assignment]
-            chat=SimpleNamespace(
-                completions=SimpleNamespace(
-                    create=lambda **kwargs: SimpleNamespace(model="gpt-5.5", choices=[])
+        provider = OpenAIProvider(
+            model="gpt-5.5",
+            client=SimpleNamespace(  # type: ignore[arg-type]
+                chat=SimpleNamespace(
+                    completions=SimpleNamespace(
+                        create=lambda **kwargs: SimpleNamespace(model="gpt-5.5", choices=[])
+                    )
                 )
-            )
+            ),
         )
 
-        with pytest.raises(RuntimeError, match="empty"):
+        with pytest.raises(LLMError, match="empty"):
             provider.complete("Describe the book.")

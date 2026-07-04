@@ -22,6 +22,7 @@ services:
       BOOKSMART_LLM_MODEL: ${BOOKSMART_LLM_MODEL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     volumes:
       - ./storage:/data/storage
     depends_on:

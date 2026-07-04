@@ -11,6 +11,8 @@ class Settings(BaseSettings):
 
     llm_provider: str = "anthropic"
     llm_model: str | None = None  # None -> the selected provider's default model
-    # API keys; when unset the SDKs fall back to ANTHROPIC_API_KEY / OPENAI_API_KEY.
+    # API keys; when unset the providers fall back to the conventional
+    # ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY environment variables.
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
+    gemini_api_key: str | None = None

@@ -7,6 +7,7 @@ API keys come from settings or fall back to the SDKs' standard environment
 variables (ANTHROPIC_API_KEY, OPENAI_API_KEY).
 """
 
+import os
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -18,10 +19,19 @@ from app.config import Settings
 
 MAX_COMPLETION_TOKENS = 16000
 
+# Gemini is served through Google's OpenAI-compatible endpoint, so the OpenAI
+# SDK covers both and Gemini needs no dependency of its own.
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
 DEFAULT_MODELS = {
     "anthropic": "claude-opus-4-8",
     "openai": "gpt-5.5",
+    "gemini": "gemini-2.5-pro",
 }
+
+
+class LLMError(RuntimeError):
+    """The provider returned no usable completion (refusal, empty response)."""
 
 
 @dataclass(frozen=True)
@@ -37,9 +47,14 @@ class LLMProvider(Protocol):
 
 
 class AnthropicProvider:
-    def __init__(self, model: str, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        client: anthropic.Anthropic | None = None,
+    ) -> None:
         self.model = model
-        self._client = anthropic.Anthropic(api_key=api_key)
+        self._client = client or anthropic.Anthropic(api_key=api_key)
 
     def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
         response = self._client.messages.create(
@@ -49,25 +64,52 @@ class AnthropicProvider:
             messages=[{"role": "user", "content": prompt}],
         )
         if response.stop_reason == "refusal":
-            raise RuntimeError(f"{self.model} refused the request")
+            raise LLMError(f"{self.model} refused the request")
         text = "".join(block.text for block in response.content if block.type == "text")
         return LLMResponse(text=text, model=response.model)
 
 
 class OpenAIProvider:
-    def __init__(self, model: str, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        client: openai.OpenAI | None = None,
+    ) -> None:
         self.model = model
-        self._client = openai.OpenAI(api_key=api_key)
+        self._client = client or openai.OpenAI(api_key=api_key, base_url=base_url)
 
     def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
         messages: list[ChatCompletionMessageParam] = []
         if system is not None:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        response = self._client.chat.completions.create(model=self.model, messages=messages)
+        response = self._client.chat.completions.create(
+            model=self.model,
+            max_completion_tokens=MAX_COMPLETION_TOKENS,
+            messages=messages,
+        )
         if not response.choices or response.choices[0].message.content is None:
-            raise RuntimeError(f"{self.model} returned an empty completion")
+            raise LLMError(f"{self.model} returned an empty completion")
         return LLMResponse(text=response.choices[0].message.content, model=response.model)
+
+
+class GeminiProvider(OpenAIProvider):
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        client: openai.OpenAI | None = None,
+    ) -> None:
+        # The OpenAI SDK only knows OPENAI_API_KEY, so resolve Gemini's own
+        # conventional variable here instead of leaving it to the SDK.
+        super().__init__(
+            model,
+            api_key=api_key or os.environ.get("GEMINI_API_KEY"),
+            base_url=GEMINI_BASE_URL,
+            client=client,
+        )
 
 
 def build_llm_provider(settings: Settings) -> LLMProvider:
@@ -79,4 +121,6 @@ def build_llm_provider(settings: Settings) -> LLMProvider:
     model = settings.llm_model or DEFAULT_MODELS[settings.llm_provider]
     if settings.llm_provider == "anthropic":
         return AnthropicProvider(model=model, api_key=settings.anthropic_api_key)
+    if settings.llm_provider == "gemini":
+        return GeminiProvider(model=model, api_key=settings.gemini_api_key)
     return OpenAIProvider(model=model, api_key=settings.openai_api_key)
