@@ -70,6 +70,22 @@ class Section(Base):
     chapter: Mapped[Chapter] = relationship(back_populates="sections")
 
 
+class BookProfile(Base):
+    """An LLM-generated summary of what a book covers. Rows are never deleted;
+    each ingestion run appends a new version and the API serves the latest."""
+
+    __tablename__ = "book_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    book_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("books.id", ondelete="CASCADE"))
+    content: Mapped[str] = mapped_column(Text)
+    model: Mapped[str]
+    prompt_version: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class IngestionJob(Base):
     """One ingestion run for a book. Rows are never deleted; they form the history."""
 

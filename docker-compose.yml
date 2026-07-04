@@ -18,6 +18,10 @@ services:
     environment:
       BOOKSMART_DATABASE_URL: postgresql+psycopg://booksmart:booksmart@postgres:5432/booksmart
       BOOKSMART_STORAGE_ROOT: /data/storage
+      BOOKSMART_LLM_PROVIDER: ${BOOKSMART_LLM_PROVIDER:-anthropic}
+      BOOKSMART_LLM_MODEL: ${BOOKSMART_LLM_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - ./storage:/data/storage
     depends_on:

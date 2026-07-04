@@ -82,6 +82,17 @@ class ChapterOut(BaseModel):
     sections: list[SectionOut]
 
 
+class BookProfileOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
+
+    id: uuid.UUID
+    book_id: uuid.UUID
+    content: str
+    model: str
+    prompt_version: str
+    created_at: datetime
+
+
 class IngestionJobOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
