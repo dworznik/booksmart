@@ -27,6 +27,8 @@ DEFAULT_MODELS = {
     "anthropic": "claude-opus-4-8",
     "openai": "gpt-5.5",
     "gemini": "gemini-2.5-pro",
+    # Deterministic canned responses, no keys or network (CI, local dev).
+    "fake": "fake-llm-1",
 }
 
 
@@ -119,6 +121,12 @@ def build_llm_provider(settings: Settings) -> LLMProvider:
             f"expected one of {sorted(DEFAULT_MODELS)}"
         )
     model = settings.llm_model or DEFAULT_MODELS[settings.llm_provider]
+    if settings.llm_provider == "fake":
+        # Imported lazily: fakes imports stage prompts, whose modules import
+        # this one.
+        from app.fakes import FakeLLMProvider
+
+        return FakeLLMProvider(model=model)
     if settings.llm_provider == "anthropic":
         return AnthropicProvider(model=model, api_key=settings.anthropic_api_key)
     if settings.llm_provider == "gemini":

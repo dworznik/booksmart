@@ -6,6 +6,8 @@ from typing import Any
 import pytest
 
 from app.config import Settings
+from app.fakes import FakeLLMProvider
+from app.profile import PROFILE_SYSTEM_PROMPT
 from app.llm import (
     GEMINI_BASE_URL,
     AnthropicProvider,
@@ -56,6 +58,31 @@ class TestProviderSelection:
     def test_unknown_provider_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="hal9000"):
             build_llm_provider(make_settings(llm_provider="hal9000"))
+
+
+class TestFakeProvider:
+    def test_fake_provider_selected_via_configuration(self) -> None:
+        provider = build_llm_provider(make_settings(llm_provider="fake"))
+
+        assert isinstance(provider, FakeLLMProvider)
+        assert provider.model == "fake-llm-1"
+
+    def test_fake_provider_needs_no_api_keys(self) -> None:
+        provider = build_llm_provider(Settings(llm_provider="fake"))
+
+        response = provider.complete("anything")
+
+        assert response.text
+        assert response.model == "fake-llm-1"
+
+    def test_fake_provider_answers_profile_stage_deterministically(self) -> None:
+        provider = build_llm_provider(Settings(llm_provider="fake"))
+
+        first = provider.complete("prompt", system=PROFILE_SYSTEM_PROMPT)
+        second = provider.complete("different prompt", system=PROFILE_SYSTEM_PROMPT)
+
+        assert first.text == second.text
+        assert "profile" in first.text.lower()
 
 
 class TestAnthropicProvider:
