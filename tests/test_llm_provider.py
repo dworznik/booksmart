@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from app.config import Settings
+from app.extraction import EXTRACTION_SYSTEM_PROMPT, parse_extraction_response
 from app.fakes import FakeLLMProvider
 from app.profile import PROFILE_SYSTEM_PROMPT
 from app.llm import (
@@ -74,6 +75,15 @@ class TestFakeProvider:
 
         assert response.text
         assert response.model == "fake-llm-1"
+
+    def test_fake_extraction_response_parses_as_knowledge_objects(self) -> None:
+        provider = build_llm_provider(Settings(llm_provider="fake"))
+
+        response = provider.complete("chapter text", system=EXTRACTION_SYSTEM_PROMPT)
+
+        objects = parse_extraction_response(response.text)
+        assert len(objects) == 1
+        assert objects[0].type == "Principle"
 
     def test_fake_provider_answers_profile_stage_deterministically(self) -> None:
         provider = build_llm_provider(Settings(llm_provider="fake"))
