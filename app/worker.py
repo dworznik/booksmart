@@ -107,6 +107,7 @@ def _detect_and_replace_structure(
                     book_id=book.id,
                     position=chapter_position,
                     title=chapter.title,
+                    kind=chapter.kind,
                     source_line=chapter.line,
                     sections=[
                         Section(

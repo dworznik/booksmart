@@ -47,6 +47,9 @@ class Chapter(Base):
     book_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("books.id", ondelete="CASCADE"))
     position: Mapped[int]
     title: Mapped[str]
+    # "front_matter" | "chapter" | "back_matter"; lets downstream stages skip
+    # or weight peripheral matter while provenance can still point into it.
+    kind: Mapped[str] = mapped_column(default="chapter", server_default="chapter")
     source_line: Mapped[int | None]
     summary: Mapped[str | None] = mapped_column(Text)
     summary_model: Mapped[str | None]

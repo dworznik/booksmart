@@ -78,6 +78,7 @@ class ChapterOut(BaseModel):
     id: uuid.UUID
     position: int
     title: str
+    kind: str
     source_line: int | None
     sections: list[SectionOut]
 

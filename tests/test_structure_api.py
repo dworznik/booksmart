@@ -121,6 +121,41 @@ class TestStructureDetectionStage:
         assert first == second == BOOK_OUTLINE
 
 
+class TestStructureKinds:
+    def test_front_and_back_matter_distinguishable_in_response(
+        self, client: TestClient, session_factory: sessionmaker[Session], settings: Settings
+    ) -> None:
+        doc = pymupdf.open()
+        for heading in ("Contents", "Preface", "Chapter One: Modules", "Index"):
+            page = doc.new_page()
+            page.insert_text((72, 80), heading, fontsize=24)
+            page.insert_text((72, 130), "Body text in regular size.", fontsize=11)
+        pdf: bytes = doc.tobytes()
+        doc.close()
+        book_id = register_book(client, content=pdf)
+
+        job = ingest(client, session_factory, settings, book_id)
+
+        assert job["status"] == "succeeded"
+        chapters = client.get(f"/books/{book_id}/structure").json()
+        assert [(chapter["title"], chapter["kind"]) for chapter in chapters] == [
+            ("Contents", "front_matter"),
+            ("Preface", "front_matter"),
+            ("Chapter One: Modules", "chapter"),
+            ("Index", "back_matter"),
+        ]
+
+    def test_body_chapters_carry_chapter_kind(
+        self, client: TestClient, session_factory: sessionmaker[Session], settings: Settings
+    ) -> None:
+        book_id = register_book(client, content=make_structured_pdf_bytes())
+        ingest(client, session_factory, settings, book_id)
+
+        chapters = client.get(f"/books/{book_id}/structure").json()
+
+        assert {chapter["kind"] for chapter in chapters} == {"chapter"}
+
+
 class TestStructureEndpoint:
     def test_book_without_ingestion_has_empty_structure(self, client: TestClient) -> None:
         book_id = register_book(client)
