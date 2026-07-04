@@ -7,8 +7,9 @@ import pytest
 
 from app.config import Settings
 from app.extraction import EXTRACTION_SYSTEM_PROMPT, parse_extraction_response
-from app.fakes import FakeLLMProvider
+from app.fakes import FakeEmbeddingProvider, FakeLLMProvider
 from app.profile import PROFILE_SYSTEM_PROMPT
+from app.summaries import SUMMARY_SYSTEM_PROMPT, parse_summary_response
 from app.llm import (
     GEMINI_BASE_URL,
     AnthropicProvider,
@@ -64,40 +65,6 @@ class TestProviderSelection:
             build_llm_provider(make_settings(llm_provider="hal9000"))
 
 
-class TestFakeProvider:
-    def test_fake_provider_selected_via_configuration(self) -> None:
-        provider = build_llm_provider(make_settings(llm_provider="fake"))
-
-        assert isinstance(provider, FakeLLMProvider)
-        assert provider.model == "fake-llm-1"
-
-    def test_fake_provider_needs_no_api_keys(self) -> None:
-        provider = build_llm_provider(Settings(llm_provider="fake"))
-
-        response = provider.complete("anything")
-
-        assert response.text
-        assert response.model == "fake-llm-1"
-
-    def test_fake_extraction_response_parses_as_knowledge_objects(self) -> None:
-        provider = build_llm_provider(Settings(llm_provider="fake"))
-
-        response = provider.complete("chapter text", system=EXTRACTION_SYSTEM_PROMPT)
-
-        objects = parse_extraction_response(response.text)
-        assert len(objects) == 1
-        assert objects[0].type == "Principle"
-
-    def test_fake_provider_answers_profile_stage_deterministically(self) -> None:
-        provider = build_llm_provider(Settings(llm_provider="fake"))
-
-        first = provider.complete("prompt", system=PROFILE_SYSTEM_PROMPT)
-        second = provider.complete("different prompt", system=PROFILE_SYSTEM_PROMPT)
-
-        assert first.text == second.text
-        assert "profile" in first.text.lower()
-
-
 class TestEmbeddingProviderSelection:
     def test_default_configuration_builds_openai_embeddings(self) -> None:
         provider = build_embedding_provider(make_settings())
@@ -150,6 +117,64 @@ class TestOpenAIEmbeddingProvider:
         assert vectors == [[1.0, 1.0], [2.0, 2.0]]
         assert captured["model"] == "text-embedding-3-small"
         assert captured["input"] == ["first", "second"]
+
+
+class TestFakeProvider:
+    def test_fake_provider_selected_via_configuration(self) -> None:
+        provider = build_llm_provider(make_settings(llm_provider="fake"))
+
+        assert isinstance(provider, FakeLLMProvider)
+        assert provider.model == "fake-llm-1"
+
+    def test_fake_provider_needs_no_api_keys(self) -> None:
+        provider = build_llm_provider(Settings(llm_provider="fake"))
+
+        response = provider.complete("anything")
+
+        assert response.text
+        assert response.model == "fake-llm-1"
+
+    def test_fake_extraction_response_parses_as_knowledge_objects(self) -> None:
+        provider = build_llm_provider(Settings(llm_provider="fake"))
+
+        response = provider.complete("chapter text", system=EXTRACTION_SYSTEM_PROMPT)
+
+        objects = parse_extraction_response(response.text)
+        assert len(objects) == 1
+        assert objects[0].type == "Principle"
+
+    def test_fake_provider_answers_profile_stage_deterministically(self) -> None:
+        provider = build_llm_provider(Settings(llm_provider="fake"))
+
+        first = provider.complete("prompt", system=PROFILE_SYSTEM_PROMPT)
+        second = provider.complete("different prompt", system=PROFILE_SYSTEM_PROMPT)
+
+        assert first.text == second.text
+        assert "profile" in first.text.lower()
+
+    def test_fake_summary_response_parses_for_any_section_count(self) -> None:
+        provider = build_llm_provider(Settings(llm_provider="fake"))
+
+        response = provider.complete("chapter text", system=SUMMARY_SYSTEM_PROMPT)
+
+        chapter_summary, section_summaries = parse_summary_response(response.text, 3)
+        assert chapter_summary
+        assert section_summaries == [None, None, None]
+
+    def test_fake_embedding_provider_needs_no_api_keys(self) -> None:
+        provider = build_embedding_provider(Settings(embedding_provider="fake"))
+
+        assert isinstance(provider, FakeEmbeddingProvider)
+        assert provider.model == "fake-embed-1"
+
+    def test_fake_embeddings_are_deterministic_fixed_size_vectors(self) -> None:
+        provider = build_embedding_provider(Settings(embedding_provider="fake"))
+
+        first = provider.embed(["alpha", "a longer text"])
+        second = provider.embed(["alpha", "a longer text"])
+
+        assert first == second
+        assert {len(vector) for vector in first} == {8}
 
 
 class TestAnthropicProvider:

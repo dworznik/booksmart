@@ -36,6 +36,8 @@ DEFAULT_MODELS = {
 DEFAULT_EMBEDDING_MODELS = {
     "openai": "text-embedding-3-small",
     "gemini": "gemini-embedding-001",
+    # Deterministic fixed-size vectors, no keys or network (CI, local dev).
+    "fake": "fake-embed-1",
 }
 
 
@@ -179,6 +181,11 @@ def build_embedding_provider(settings: Settings) -> EmbeddingProvider:
             f"expected one of {sorted(DEFAULT_EMBEDDING_MODELS)}"
         )
     model = settings.embedding_model or DEFAULT_EMBEDDING_MODELS[settings.embedding_provider]
+    if settings.embedding_provider == "fake":
+        # Lazy for the same import-cycle reason as in build_llm_provider.
+        from app.fakes import FakeEmbeddingProvider
+
+        return FakeEmbeddingProvider(model=model)
     if settings.embedding_provider == "gemini":
         return GeminiEmbeddingProvider(model=model, api_key=settings.gemini_api_key)
     return OpenAIEmbeddingProvider(model=model, api_key=settings.openai_api_key)
