@@ -31,6 +31,23 @@ DEFAULT_MODELS = {
     "fake": "fake-llm-1",
 }
 
+# Anthropic offers no embeddings API, so the embedding provider is configured
+# separately (BOOKSMART_EMBEDDING_PROVIDER / BOOKSMART_EMBEDDING_MODEL).
+DEFAULT_EMBEDDING_MODELS = {
+    "openai": "text-embedding-3-small",
+    "gemini": "gemini-embedding-001",
+}
+
+
+def strip_fences(text: str) -> str:
+    """Models occasionally wrap JSON in ``` fences despite instructions."""
+    if not text.startswith("```"):
+        return text
+    lines = text.splitlines()[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines)
+
 
 class LLMError(RuntimeError):
     """The provider returned no usable completion (refusal, empty response)."""
@@ -112,6 +129,55 @@ class GeminiProvider(OpenAIProvider):
             base_url=GEMINI_BASE_URL,
             client=client,
         )
+
+
+class EmbeddingProvider(Protocol):
+    model: str
+
+    def embed(self, texts: list[str]) -> list[list[float]]: ...
+
+
+class OpenAIEmbeddingProvider:
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        client: openai.OpenAI | None = None,
+    ) -> None:
+        self.model = model
+        self._client = client or openai.OpenAI(api_key=api_key, base_url=base_url)
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        response = self._client.embeddings.create(model=self.model, input=texts)
+        return [item.embedding for item in sorted(response.data, key=lambda item: item.index)]
+
+
+class GeminiEmbeddingProvider(OpenAIEmbeddingProvider):
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        client: openai.OpenAI | None = None,
+    ) -> None:
+        super().__init__(
+            model,
+            api_key=api_key or os.environ.get("GEMINI_API_KEY"),
+            base_url=GEMINI_BASE_URL,
+            client=client,
+        )
+
+
+def build_embedding_provider(settings: Settings) -> EmbeddingProvider:
+    if settings.embedding_provider not in DEFAULT_EMBEDDING_MODELS:
+        raise ValueError(
+            f"Unknown embedding provider {settings.embedding_provider!r}; "
+            f"expected one of {sorted(DEFAULT_EMBEDDING_MODELS)}"
+        )
+    model = settings.embedding_model or DEFAULT_EMBEDDING_MODELS[settings.embedding_provider]
+    if settings.embedding_provider == "gemini":
+        return GeminiEmbeddingProvider(model=model, api_key=settings.gemini_api_key)
+    return OpenAIEmbeddingProvider(model=model, api_key=settings.openai_api_key)
 
 
 def build_llm_provider(settings: Settings) -> LLMProvider:

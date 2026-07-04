@@ -8,10 +8,12 @@ storage/logs/. Run with `python -m app.worker`.
 """
 
 import time
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+from qdrant_client import QdrantClient
 from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -20,16 +22,28 @@ from app.extraction import (
     EXTRACTION_PROMPT_VERSION,
     EXTRACTION_SYSTEM_PROMPT,
     build_extraction_prompt,
-    chapter_body,
+    iter_chapter_bodies,
     parse_extraction_response,
     resolve_source,
 )
-from app.llm import LLMProvider, build_llm_provider
+from app.llm import (
+    EmbeddingProvider,
+    LLMProvider,
+    build_embedding_provider,
+    build_llm_provider,
+)
 from app.models import Book, BookProfile, Chapter, IngestionJob, KnowledgeObject, Section
 from app.parsing import ParserChain, build_default_chain
 from app.profile import PROFILE_PROMPT_VERSION, PROFILE_SYSTEM_PROMPT, build_profile_prompt
 from app.storage import BookStorage
 from app.structure import detect_structure
+from app.summaries import (
+    SUMMARY_PROMPT_VERSION,
+    SUMMARY_SYSTEM_PROMPT,
+    build_summary_prompt,
+    parse_summary_response,
+)
+from app.vectors import VectorRecord, VectorStore
 
 POLL_INTERVAL_SECONDS = 1.0
 
@@ -41,6 +55,14 @@ def build_default_llm() -> LLMProvider:
     """Provider used when the caller injects none. A separate function so tests
     can substitute a stub without touching every process_one_job call site."""
     return build_llm_provider(Settings())
+
+
+def build_default_embedder() -> EmbeddingProvider:
+    return build_embedding_provider(Settings())
+
+
+def build_default_vector_store() -> VectorStore:
+    return VectorStore(QdrantClient(url=Settings().qdrant_url))
 
 
 def _claim_next_job(session: Session) -> IngestionJob | None:
@@ -132,11 +154,7 @@ def _extract_knowledge(
             log("extraction: no chapters detected; nothing to extract")
             return
         total = 0
-        for index, chapter in enumerate(chapters):
-            next_chapter = chapters[index + 1] if index + 1 < len(chapters) else None
-            body = chapter_body(
-                markdown, chapter.source_line, next_chapter.source_line if next_chapter else None
-            )
+        for chapter, body in iter_chapter_bodies(chapters, markdown):
             response = llm.complete(
                 build_extraction_prompt(book, chapter, body), system=EXTRACTION_SYSTEM_PROMPT
             )
@@ -175,11 +193,116 @@ def _extract_knowledge(
         raise RuntimeError(f"knowledge extraction stage failed: {exc}") from exc
 
 
+def _summarize_structure(
+    session: Session,
+    book: Book,
+    markdown: str,
+    llm: LLMProvider,
+    log: Callable[[str], None],
+) -> None:
+    """Summary stage: one LLM call per chapter fills chapter/section summaries."""
+    log("summaries: summarizing chapters and sections")
+    try:
+        chapters = list(
+            session.scalars(
+                select(Chapter).where(Chapter.book_id == book.id).order_by(Chapter.position)
+            )
+        )
+        if not chapters:
+            log("summaries: no chapters detected; nothing to summarize")
+            return
+        for chapter, body in iter_chapter_bodies(chapters, markdown):
+            response = llm.complete(
+                build_summary_prompt(book, chapter, body), system=SUMMARY_SYSTEM_PROMPT
+            )
+            chapter_summary, section_summaries = parse_summary_response(
+                response.text, len(chapter.sections)
+            )
+            chapter.summary = chapter_summary
+            for section, summary in zip(chapter.sections, section_summaries, strict=True):
+                section.summary = summary
+        log(f"summaries: {len(chapters)} chapters summarized (prompt v{SUMMARY_PROMPT_VERSION})")
+    except Exception as exc:
+        log(f"summaries: failed — {type(exc).__name__}: {exc}")
+        raise RuntimeError(f"summary stage failed: {exc}") from exc
+
+
+def _generate_embeddings(
+    session: Session,
+    book: Book,
+    embedder: EmbeddingProvider,
+    vectors: VectorStore,
+    log: Callable[[str], None],
+) -> None:
+    """Embedding stage: embed chapter/section summaries and knowledge objects,
+    store the vectors in Qdrant, and link each row via embedding_id."""
+    log("embeddings: generating embeddings")
+    try:
+        chapters = list(
+            session.scalars(
+                select(Chapter).where(Chapter.book_id == book.id).order_by(Chapter.position)
+            )
+        )
+        objects = list(
+            session.scalars(select(KnowledgeObject).where(KnowledgeObject.book_id == book.id))
+        )
+
+        items: list[tuple[Chapter | Section | KnowledgeObject, str, str]] = []
+        for chapter in chapters:
+            if chapter.summary:
+                items.append((chapter, "chapter", chapter.summary))
+            for section in chapter.sections:
+                if section.summary:
+                    items.append((section, "section", section.summary))
+        for knowledge_object in objects:
+            items.append(
+                (
+                    knowledge_object,
+                    "knowledge_object",
+                    f"{knowledge_object.type}: {knowledge_object.title}\n"
+                    f"{knowledge_object.summary}\n{knowledge_object.content}",
+                )
+            )
+
+        if not items:
+            vectors.replace_book_points(str(book.id), [])
+            log("embeddings: nothing to embed")
+            return
+
+        embedded_vectors = embedder.embed([text for _, _, text in items])
+        embedded_at = datetime.now(UTC)
+        records: list[VectorRecord] = []
+        for (row, record_type, text), vector in zip(items, embedded_vectors, strict=True):
+            point_id = uuid.uuid4()
+            row.embedding_id = point_id
+            row.embedding_model = embedder.model
+            row.embedded_at = embedded_at
+            records.append(
+                VectorRecord(
+                    id=str(point_id),
+                    vector=vector,
+                    payload={
+                        "record_type": record_type,
+                        "record_id": str(row.id),
+                        "book_id": str(book.id),
+                        "text": text,
+                    },
+                )
+            )
+        vectors.replace_book_points(str(book.id), records)
+        log(f"embeddings: {len(records)} vectors stored ({embedder.model})")
+    except Exception as exc:
+        log(f"embeddings: failed — {type(exc).__name__}: {exc}")
+        raise RuntimeError(f"embedding stage failed: {exc}") from exc
+
+
 def process_one_job(
     session_factory: sessionmaker[Session],
     storage_root: Path,
     chain: ParserChain | None = None,
     llm: LLMProvider | None = None,
+    embedder: EmbeddingProvider | None = None,
+    vector_store: VectorStore | None = None,
 ) -> bool:
     """Claim and run the oldest queued job. Returns whether a job was processed."""
     storage = BookStorage(storage_root)
@@ -208,6 +331,14 @@ def process_one_job(
             llm = llm or build_default_llm()
             _generate_profile(session, book, llm, log)
             _extract_knowledge(session, book, result.markdown, llm, log)
+            _summarize_structure(session, book, result.markdown, llm, log)
+            _generate_embeddings(
+                session,
+                book,
+                embedder or build_default_embedder(),
+                vector_store or build_default_vector_store(),
+                log,
+            )
             job.status = "succeeded"
         except Exception as exc:
             # Discard partial stage writes (e.g. a structure delete whose
@@ -228,9 +359,18 @@ def run_forever() -> None:
     settings = Settings()
     engine = create_engine(settings.database_url)
     session_factory = sessionmaker(bind=engine)
-    llm = build_llm_provider(settings)  # fail fast on misconfiguration, build once
+    # Fail fast on misconfiguration; build everything once per process.
+    llm = build_llm_provider(settings)
+    embedder = build_embedding_provider(settings)
+    vector_store = VectorStore(QdrantClient(url=settings.qdrant_url))
     while True:
-        if not process_one_job(session_factory, settings.storage_root, llm=llm):
+        if not process_one_job(
+            session_factory,
+            settings.storage_root,
+            llm=llm,
+            embedder=embedder,
+            vector_store=vector_store,
+        ):
             time.sleep(POLL_INTERVAL_SECONDS)
 
 

@@ -12,9 +12,12 @@ from app.profile import PROFILE_SYSTEM_PROMPT
 from app.llm import (
     GEMINI_BASE_URL,
     AnthropicProvider,
+    GeminiEmbeddingProvider,
     GeminiProvider,
     LLMError,
+    OpenAIEmbeddingProvider,
     OpenAIProvider,
+    build_embedding_provider,
     build_llm_provider,
 )
 
@@ -93,6 +96,60 @@ class TestFakeProvider:
 
         assert first.text == second.text
         assert "profile" in first.text.lower()
+
+
+class TestEmbeddingProviderSelection:
+    def test_default_configuration_builds_openai_embeddings(self) -> None:
+        provider = build_embedding_provider(make_settings())
+
+        assert isinstance(provider, OpenAIEmbeddingProvider)
+        assert provider.model == "text-embedding-3-small"
+
+    def test_gemini_embeddings_selected_via_configuration(self) -> None:
+        provider = build_embedding_provider(make_settings(embedding_provider="gemini"))
+
+        assert isinstance(provider, GeminiEmbeddingProvider)
+        assert provider.model == "gemini-embedding-001"
+        assert str(provider._client.base_url) == GEMINI_BASE_URL
+
+    def test_configured_model_overrides_default(self) -> None:
+        provider = build_embedding_provider(
+            make_settings(embedding_model="text-embedding-3-large")
+        )
+
+        assert provider.model == "text-embedding-3-large"
+
+    def test_unknown_embedding_provider_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="anthropic"):
+            build_embedding_provider(make_settings(embedding_provider="anthropic"))
+
+
+class TestOpenAIEmbeddingProvider:
+    def test_embed_returns_vectors_in_input_order(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def fake_create(**kwargs: Any) -> Any:
+            captured.update(kwargs)
+            # Deliberately out of order: the provider must sort by index.
+            return SimpleNamespace(
+                data=[
+                    SimpleNamespace(index=1, embedding=[2.0, 2.0]),
+                    SimpleNamespace(index=0, embedding=[1.0, 1.0]),
+                ]
+            )
+
+        provider = OpenAIEmbeddingProvider(
+            model="text-embedding-3-small",
+            client=SimpleNamespace(  # type: ignore[arg-type]
+                embeddings=SimpleNamespace(create=fake_create)
+            ),
+        )
+
+        vectors = provider.embed(["first", "second"])
+
+        assert vectors == [[1.0, 1.0], [2.0, 2.0]]
+        assert captured["model"] == "text-embedding-3-small"
+        assert captured["input"] == ["first", "second"]
 
 
 class TestAnthropicProvider:

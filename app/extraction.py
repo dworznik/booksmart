@@ -7,9 +7,11 @@ objects record exactly what produced them.
 """
 
 import json
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Literal, get_args
 
+from app.llm import strip_fences
 from app.models import Book, Chapter, Section
 
 EXTRACTION_PROMPT_VERSION = "1"
@@ -62,16 +64,6 @@ class ExtractedObject:
     paragraph: int | None
 
 
-def _strip_fences(text: str) -> str:
-    """Models occasionally wrap the JSON in ``` fences despite instructions."""
-    if not text.startswith("```"):
-        return text
-    lines = text.splitlines()[1:]
-    if lines and lines[-1].strip() == "```":
-        lines = lines[:-1]
-    return "\n".join(lines)
-
-
 def _optional_int(item: dict[str, object], field: str, position: int) -> int | None:
     value = item.get(field)
     if value is None:
@@ -82,7 +74,7 @@ def _optional_int(item: dict[str, object], field: str, position: int) -> int | N
 
 
 def parse_extraction_response(text: str) -> list[ExtractedObject]:
-    payload = _strip_fences(text.strip())
+    payload = strip_fences(text.strip())
     try:
         data = json.loads(payload)
     except json.JSONDecodeError as exc:
@@ -128,6 +120,20 @@ def chapter_body(markdown: str, start_line: int | None, next_start_line: int | N
     lines = markdown.splitlines()
     end = next_start_line - 1 if next_start_line is not None else len(lines)
     return "\n".join(lines[start_line - 1 : end])
+
+
+def iter_chapter_bodies(
+    chapters: Sequence[Chapter], markdown: str
+) -> Iterator[tuple[Chapter, str]]:
+    """Each chapter paired with its slice of the parsed markdown."""
+    for index, chapter in enumerate(chapters):
+        next_chapter = chapters[index + 1] if index + 1 < len(chapters) else None
+        yield (
+            chapter,
+            chapter_body(
+                markdown, chapter.source_line, next_chapter.source_line if next_chapter else None
+            ),
+        )
 
 
 def resolve_source(chapter: Chapter, section_index: int | None) -> tuple[Section | None, str]:

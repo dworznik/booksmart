@@ -23,11 +23,16 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      BOOKSMART_QDRANT_URL: http://qdrant:6333
+      BOOKSMART_EMBEDDING_PROVIDER: ${BOOKSMART_EMBEDDING_PROVIDER:-openai}
+      BOOKSMART_EMBEDDING_MODEL: ${BOOKSMART_EMBEDDING_MODEL:-}
     volumes:
       - ./storage:/data/storage
     depends_on:
       postgres:
         condition: service_healthy
+      qdrant:
+        condition: service_started
     command: python -m app.worker
 
   postgres:
@@ -46,5 +51,14 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  qdrant:
+    image: qdrant/qdrant:v1.15.5
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrantdata:/qdrant/storage
+
 volumes:
   pgdata:
+  qdrantdata:

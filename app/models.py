@@ -48,6 +48,10 @@ class Chapter(Base):
     position: Mapped[int]
     title: Mapped[str]
     source_line: Mapped[int | None]
+    summary: Mapped[str | None] = mapped_column(Text)
+    embedding_id: Mapped[uuid.UUID | None]
+    embedding_model: Mapped[str | None]
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     sections: Mapped[list["Section"]] = relationship(
         back_populates="chapter",
@@ -66,6 +70,10 @@ class Section(Base):
     position: Mapped[int]
     title: Mapped[str]
     source_line: Mapped[int | None]
+    summary: Mapped[str | None] = mapped_column(Text)
+    embedding_id: Mapped[uuid.UUID | None]
+    embedding_model: Mapped[str | None]
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     chapter: Mapped[Chapter] = relationship(back_populates="sections")
 
@@ -115,6 +123,9 @@ class KnowledgeObject(Base):
     paragraph: Mapped[int | None]
     extraction_model: Mapped[str]
     extraction_prompt_version: Mapped[str]
+    embedding_id: Mapped[uuid.UUID | None]
+    embedding_model: Mapped[str | None]
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
