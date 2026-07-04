@@ -8,24 +8,25 @@ objects record exactly what produced them.
 
 import json
 from dataclasses import dataclass
+from typing import Literal, get_args
 
-from app.models import Book, Chapter
+from app.models import Book, Chapter, Section
 
 EXTRACTION_PROMPT_VERSION = "1"
 
-KNOWLEDGE_OBJECT_TYPES = frozenset(
-    {
-        "Practice",
-        "Principle",
-        "Tradeoff",
-        "Anti-pattern",
-        "Smell",
-        "Decision Rule",
-        "Definition",
-        "Glossary",
-        "Checklist",
-    }
-)
+KnowledgeType = Literal[
+    "Practice",
+    "Principle",
+    "Tradeoff",
+    "Anti-pattern",
+    "Smell",
+    "Decision Rule",
+    "Definition",
+    "Glossary",
+    "Checklist",
+]
+
+KNOWLEDGE_OBJECT_TYPES: frozenset[str] = frozenset(get_args(KnowledgeType))
 
 EXTRACTION_SYSTEM_PROMPT = (
     "You extract candidate knowledge objects from technical book chapters for "
@@ -36,12 +37,13 @@ EXTRACTION_SYSTEM_PROMPT = (
     '"summary" (one sentence), "confidence" (number from 0.0 to 1.0), '
     '"section_index" (0-based index into the numbered section list, or null when '
     "the idea is not tied to one section), "
-    '"page" (integer or null), "paragraph" (integer or null). '
-    "Extract only ideas the chapter actually asserts; return [] for a chapter "
-    "with none."
+    '"page" (integer, only when the text carries an explicit page marker, else null), '
+    '"paragraph" (integer, only when the paragraph is unambiguous, else null). '
+    "Never guess page or paragraph numbers. Extract only ideas the chapter "
+    "actually asserts; return [] for a chapter with none."
 )
 
-_REQUIRED_FIELDS = ("type", "title", "content", "summary", "confidence")
+REQUIRED_FIELDS = ("type", "title", "content", "summary", "confidence")
 
 
 class ExtractionError(RuntimeError):
@@ -92,7 +94,7 @@ def parse_extraction_response(text: str) -> list[ExtractedObject]:
     for position, item in enumerate(data):
         if not isinstance(item, dict):
             raise ExtractionError(f"element {position} is not a JSON object")
-        for field in _REQUIRED_FIELDS:
+        for field in REQUIRED_FIELDS:
             if field not in item:
                 raise ExtractionError(f"element {position} is missing {field!r}")
         if item["type"] not in KNOWLEDGE_OBJECT_TYPES:
@@ -126,6 +128,18 @@ def chapter_body(markdown: str, start_line: int | None, next_start_line: int | N
     lines = markdown.splitlines()
     end = next_start_line - 1 if next_start_line is not None else len(lines)
     return "\n".join(lines[start_line - 1 : end])
+
+
+def resolve_source(chapter: Chapter, section_index: int | None) -> tuple[Section | None, str]:
+    """The section the LLM pointed at (None when absent or out of range) and the
+    human-readable source location string."""
+    section = None
+    if section_index is not None and 0 <= section_index < len(chapter.sections):
+        section = chapter.sections[section_index]
+    source_location = f"chapter {chapter.position + 1}: {chapter.title}"
+    if section is not None:
+        source_location += f" > {section.title}"
+    return section, source_location
 
 
 def build_extraction_prompt(book: Book, chapter: Chapter, body: str) -> str:

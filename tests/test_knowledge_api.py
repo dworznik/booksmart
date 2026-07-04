@@ -1,6 +1,7 @@
 """Integration tests: knowledge extraction persists typed objects with provenance."""
 
 import json
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
@@ -9,6 +10,7 @@ from app.config import Settings
 from app.extraction import EXTRACTION_SYSTEM_PROMPT
 
 from .conftest import StubLLMProvider
+from .test_ingestion_api import register_book
 from .test_profile_api import register_book_with_hints
 from .test_structure_api import ingest
 
@@ -50,7 +52,9 @@ CHAPTER_TWO_OBJECTS = [
 
 
 def prime_extraction(stub: StubLLMProvider) -> None:
-    stub.extraction_responses = [json.dumps(CHAPTER_ONE_OBJECTS), json.dumps(CHAPTER_TWO_OBJECTS)]
+    stub.queue(
+        EXTRACTION_SYSTEM_PROMPT, json.dumps(CHAPTER_ONE_OBJECTS), json.dumps(CHAPTER_TWO_OBJECTS)
+    )
 
 
 class TestKnowledgeExtractionStage:
@@ -145,12 +149,53 @@ class TestKnowledgeExtractionStage:
         prime_extraction(stub_llm)
         ingest(client, session_factory, settings, book_id)
 
-        stub_llm.extraction_responses = ["this is not JSON"]
+        stub_llm.queue(EXTRACTION_SYSTEM_PROMPT, "this is not JSON")
         job = ingest(client, session_factory, settings, book_id)
 
         assert job["status"] == "failed"
         assert "extraction" in str(job["error"])
         assert len(client.get(f"/books/{book_id}/knowledge-objects").json()) == 3
+
+    def test_book_without_detected_chapters_extracts_nothing_but_succeeds(
+        self,
+        client: TestClient,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+    ) -> None:
+        # A plain-text PDF with no headings yields no chapters, so no LLM calls.
+        book_id = register_book(client)
+
+        job = ingest(client, session_factory, settings, book_id)
+
+        assert job["status"] == "succeeded"
+        assert client.get(f"/books/{book_id}/knowledge-objects").json() == []
+        log = (Path(settings.storage_root) / "logs" / f"{job['id']}.log").read_text(
+            encoding="utf-8"
+        )
+        assert "no chapters detected" in log
+
+    def test_out_of_range_section_index_keeps_chapter_link_only(
+        self,
+        client: TestClient,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        stub_llm: StubLLMProvider,
+    ) -> None:
+        book_id = register_book_with_hints(client)
+        rogue = dict(CHAPTER_ONE_OBJECTS[0], section_index=7)
+        stub_llm.queue(EXTRACTION_SYSTEM_PROMPT, json.dumps([rogue]), "[]")
+
+        job = ingest(client, session_factory, settings, book_id)
+
+        assert job["status"] == "succeeded"
+        objects = client.get(f"/books/{book_id}/knowledge-objects").json()
+        assert len(objects) == 1
+        assert objects[0]["chapter_id"] is not None
+        assert objects[0]["section_id"] is None
+        log = (Path(settings.storage_root) / "logs" / f"{job['id']}.log").read_text(
+            encoding="utf-8"
+        )
+        assert "out of range" in log
 
     def test_stage_is_visible_in_parse_log(
         self,
@@ -159,8 +204,6 @@ class TestKnowledgeExtractionStage:
         settings: Settings,
         stub_llm: StubLLMProvider,
     ) -> None:
-        from pathlib import Path
-
         book_id = register_book_with_hints(client)
         prime_extraction(stub_llm)
 

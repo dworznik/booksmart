@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.config import Settings
 from app.llm import LLMResponse
 from app.models import BookProfile
+from app.profile import PROFILE_SYSTEM_PROMPT
 from app.worker import process_one_job
 
 from .conftest import StubLLMProvider
@@ -70,8 +71,6 @@ class TestProfileGenerationStage:
         book_id = register_book_with_hints(client)
 
         ingest(client, session_factory, settings, book_id)
-
-        from app.profile import PROFILE_SYSTEM_PROMPT
 
         profile_calls = [(p, s) for p, s in stub_llm.calls if s == PROFILE_SYSTEM_PROMPT]
         assert len(profile_calls) == 1
