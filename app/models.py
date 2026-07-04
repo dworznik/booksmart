@@ -86,6 +86,40 @@ class BookProfile(Base):
     )
 
 
+class KnowledgeObject(Base):
+    """A typed candidate knowledge object extracted from a book. Replaced
+    wholesale per book on each successful extraction run. Provenance fields
+    (edition, extraction model, prompt version) are frozen at extraction time
+    even though the book's own metadata stays editable."""
+
+    __tablename__ = "knowledge_objects"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    book_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("books.id", ondelete="CASCADE"))
+    chapter_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("chapters.id", ondelete="SET NULL")
+    )
+    section_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sections.id", ondelete="SET NULL")
+    )
+
+    type: Mapped[str]
+    title: Mapped[str]
+    content: Mapped[str] = mapped_column(Text)
+    summary: Mapped[str] = mapped_column(Text)
+    source_location: Mapped[str]
+    confidence: Mapped[float]
+
+    edition: Mapped[str | None]
+    page: Mapped[int | None]
+    paragraph: Mapped[int | None]
+    extraction_model: Mapped[str]
+    extraction_prompt_version: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class IngestionJob(Base):
     """One ingestion run for a book. Rows are never deleted; they form the history."""
 

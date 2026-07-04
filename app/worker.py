@@ -16,8 +16,15 @@ from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
+from app.extraction import (
+    EXTRACTION_PROMPT_VERSION,
+    EXTRACTION_SYSTEM_PROMPT,
+    build_extraction_prompt,
+    chapter_body,
+    parse_extraction_response,
+)
 from app.llm import LLMProvider, build_llm_provider
-from app.models import Book, BookProfile, Chapter, IngestionJob, Section
+from app.models import Book, BookProfile, Chapter, IngestionJob, KnowledgeObject, Section
 from app.parsing import ParserChain, build_default_chain
 from app.profile import PROFILE_PROMPT_VERSION, PROFILE_SYSTEM_PROMPT, build_profile_prompt
 from app.storage import BookStorage
@@ -104,6 +111,68 @@ def _generate_profile(
         raise RuntimeError(f"profile generation stage failed: {exc}") from exc
 
 
+def _extract_knowledge(
+    session: Session,
+    book: Book,
+    markdown: str,
+    llm: LLMProvider,
+    log: Callable[[str], None],
+) -> None:
+    """Extraction stage: replace the book's knowledge objects, one LLM call per chapter."""
+    log("extraction: extracting knowledge objects")
+    try:
+        chapters = list(
+            session.scalars(
+                select(Chapter).where(Chapter.book_id == book.id).order_by(Chapter.position)
+            )
+        )
+        session.execute(delete(KnowledgeObject).where(KnowledgeObject.book_id == book.id))
+        total = 0
+        for index, chapter in enumerate(chapters):
+            next_chapter = chapters[index + 1] if index + 1 < len(chapters) else None
+            body = chapter_body(
+                markdown, chapter.source_line, next_chapter.source_line if next_chapter else None
+            )
+            response = llm.complete(
+                build_extraction_prompt(book, chapter, body), system=EXTRACTION_SYSTEM_PROMPT
+            )
+            for extracted in parse_extraction_response(response.text):
+                section = None
+                if extracted.section_index is not None and (
+                    0 <= extracted.section_index < len(chapter.sections)
+                ):
+                    section = chapter.sections[extracted.section_index]
+                source_location = f"chapter {chapter.position + 1}: {chapter.title}"
+                if section is not None:
+                    source_location += f" > {section.title}"
+                session.add(
+                    KnowledgeObject(
+                        book_id=book.id,
+                        chapter_id=chapter.id,
+                        section_id=section.id if section is not None else None,
+                        type=extracted.type,
+                        title=extracted.title,
+                        content=extracted.content,
+                        summary=extracted.summary,
+                        source_location=source_location,
+                        confidence=extracted.confidence,
+                        edition=book.edition,
+                        page=extracted.page,
+                        paragraph=extracted.paragraph,
+                        extraction_model=response.model,
+                        extraction_prompt_version=EXTRACTION_PROMPT_VERSION,
+                    )
+                )
+                total += 1
+        log(
+            f"extraction: {total} knowledge objects from {len(chapters)} chapters "
+            f"(prompt v{EXTRACTION_PROMPT_VERSION})"
+        )
+    except Exception as exc:
+        log(f"extraction: failed — {type(exc).__name__}: {exc}")
+        raise RuntimeError(f"knowledge extraction stage failed: {exc}") from exc
+
+
 def process_one_job(
     session_factory: sessionmaker[Session],
     storage_root: Path,
@@ -134,7 +203,9 @@ def process_one_job(
             job.output_path = str(storage.save_parsed(book.id, job.id, result.markdown))
             job.parser_used = result.parser
             _detect_and_replace_structure(session, book, result.markdown, log)
-            _generate_profile(session, book, llm or build_default_llm(), log)
+            llm = llm or build_default_llm()
+            _generate_profile(session, book, llm, log)
+            _extract_knowledge(session, book, result.markdown, llm, log)
             job.status = "succeeded"
         except Exception as exc:
             # Discard partial stage writes (e.g. a structure delete whose

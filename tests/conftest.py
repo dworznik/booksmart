@@ -79,15 +79,27 @@ def session_factory(db_engine: Engine) -> sessionmaker[Session]:
 
 
 class StubLLMProvider:
-    """Canned-response LLM provider that records every prompt it receives."""
+    """Canned-response LLM provider that records every prompt it receives.
+
+    Extraction calls (recognised by their system prompt) consume
+    `extraction_responses` in order, then fall back to an empty JSON array so
+    tests that don't care about extraction ingest cleanly. All other calls
+    return `text` (the profile stage).
+    """
 
     def __init__(self, text: str = "A stubbed book profile.", model: str = "stub-llm-1") -> None:
         self.text = text
         self.model = model
+        self.extraction_responses: list[str] = []
         self.calls: list[tuple[str, str | None]] = []
 
     def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
+        from app.extraction import EXTRACTION_SYSTEM_PROMPT
+
         self.calls.append((prompt, system))
+        if system == EXTRACTION_SYSTEM_PROMPT:
+            payload = self.extraction_responses.pop(0) if self.extraction_responses else "[]"
+            return LLMResponse(text=payload, model=self.model)
         return LLMResponse(text=self.text, model=self.model)
 
 
