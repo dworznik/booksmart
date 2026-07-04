@@ -71,6 +71,7 @@ class IngestionJobOut(BaseModel):
     status: str
     error: str | None
     output_path: str | None
+    parser_used: str | None
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None

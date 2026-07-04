@@ -25,6 +25,7 @@ class BookStorage:
     def __init__(self, storage_root: Path) -> None:
         self._books_dir = storage_root / "books"
         self._parsed_dir = storage_root / "parsed"
+        self._logs_dir = storage_root / "logs"
 
     def save_original(self, book_id: uuid.UUID, filename: str, stream: BinaryIO) -> StoredFile:
         """Stream the upload to disk, computing MD5 checksum and SHA-256 hash on the way."""
@@ -52,6 +53,12 @@ class BookStorage:
         parsed_dir.mkdir(parents=True, exist_ok=True)
         target = parsed_dir / f"{job_id}.md"
         target.write_text(markdown, encoding="utf-8")
+        return target
+
+    def save_log(self, job_id: uuid.UUID, content: str) -> Path:
+        self._logs_dir.mkdir(parents=True, exist_ok=True)
+        target = self._logs_dir / f"{job_id}.log"
+        target.write_text(content, encoding="utf-8")
         return target
 
     def discard(self, book_id: uuid.UUID) -> None:
