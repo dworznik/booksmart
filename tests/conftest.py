@@ -16,6 +16,7 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
+from app.extraction import EXTRACTION_SYSTEM_PROMPT
 from app.llm import LLMResponse
 from app.main import create_app
 
@@ -81,25 +82,30 @@ def session_factory(db_engine: Engine) -> sessionmaker[Session]:
 class StubLLMProvider:
     """Canned-response LLM provider that records every prompt it receives.
 
-    Extraction calls (recognised by their system prompt) consume
-    `extraction_responses` in order, then fall back to an empty JSON array so
-    tests that don't care about extraction ingest cleanly. All other calls
-    return `text` (the profile stage).
+    Stages are told apart by their system prompt: `queue()` enqueues responses
+    for one stage, consumed in call order. Without queued responses a stage
+    falls back to its entry in `defaults` (extraction needs valid JSON to keep
+    unrelated tests ingesting cleanly), and otherwise to `text`.
     """
+
+    defaults: dict[str, str] = {EXTRACTION_SYSTEM_PROMPT: "[]"}
 
     def __init__(self, text: str = "A stubbed book profile.", model: str = "stub-llm-1") -> None:
         self.text = text
         self.model = model
-        self.extraction_responses: list[str] = []
+        self.queues: dict[str, list[str]] = {}
         self.calls: list[tuple[str, str | None]] = []
 
-    def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
-        from app.extraction import EXTRACTION_SYSTEM_PROMPT
+    def queue(self, system: str, *responses: str) -> None:
+        self.queues.setdefault(system, []).extend(responses)
 
+    def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
         self.calls.append((prompt, system))
-        if system == EXTRACTION_SYSTEM_PROMPT:
-            payload = self.extraction_responses.pop(0) if self.extraction_responses else "[]"
-            return LLMResponse(text=payload, model=self.model)
+        queued = self.queues.get(system or "")
+        if queued:
+            return LLMResponse(text=queued.pop(0), model=self.model)
+        if system in self.defaults:
+            return LLMResponse(text=self.defaults[system], model=self.model)
         return LLMResponse(text=self.text, model=self.model)
 
 

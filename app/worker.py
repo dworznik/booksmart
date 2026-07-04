@@ -22,6 +22,7 @@ from app.extraction import (
     build_extraction_prompt,
     chapter_body,
     parse_extraction_response,
+    resolve_source,
 )
 from app.llm import LLMProvider, build_llm_provider
 from app.models import Book, BookProfile, Chapter, IngestionJob, KnowledgeObject, Section
@@ -127,6 +128,9 @@ def _extract_knowledge(
             )
         )
         session.execute(delete(KnowledgeObject).where(KnowledgeObject.book_id == book.id))
+        if not chapters:
+            log("extraction: no chapters detected; nothing to extract")
+            return
         total = 0
         for index, chapter in enumerate(chapters):
             next_chapter = chapters[index + 1] if index + 1 < len(chapters) else None
@@ -137,14 +141,12 @@ def _extract_knowledge(
                 build_extraction_prompt(book, chapter, body), system=EXTRACTION_SYSTEM_PROMPT
             )
             for extracted in parse_extraction_response(response.text):
-                section = None
-                if extracted.section_index is not None and (
-                    0 <= extracted.section_index < len(chapter.sections)
-                ):
-                    section = chapter.sections[extracted.section_index]
-                source_location = f"chapter {chapter.position + 1}: {chapter.title}"
-                if section is not None:
-                    source_location += f" > {section.title}"
+                section, source_location = resolve_source(chapter, extracted.section_index)
+                if extracted.section_index is not None and section is None:
+                    log(
+                        f"extraction: section_index {extracted.section_index} out of range "
+                        f"for chapter {chapter.position + 1}; keeping chapter link only"
+                    )
                 session.add(
                     KnowledgeObject(
                         book_id=book.id,

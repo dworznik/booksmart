@@ -1,27 +1,16 @@
 import uuid
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.extraction import KnowledgeType
 from app.models import Book, KnowledgeObject
 from app.schemas import KnowledgeObjectOut
 
 router = APIRouter(tags=["knowledge"])
-
-KnowledgeType = Literal[
-    "Practice",
-    "Principle",
-    "Tradeoff",
-    "Anti-pattern",
-    "Smell",
-    "Decision Rule",
-    "Definition",
-    "Glossary",
-    "Checklist",
-]
 
 
 @router.get("/books/{book_id}/knowledge-objects", response_model=list[KnowledgeObjectOut])

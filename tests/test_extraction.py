@@ -1,9 +1,12 @@
 """Unit tests for extraction response parsing and chapter slicing."""
 
+import json
+
 import pytest
 
 from app.extraction import (
     KNOWLEDGE_OBJECT_TYPES,
+    REQUIRED_FIELDS,
     ExtractionError,
     chapter_body,
     parse_extraction_response,
@@ -22,8 +25,6 @@ VALID_ITEM = {
 
 
 def as_json(items: list[dict[str, object]]) -> str:
-    import json
-
     return json.dumps(items)
 
 
@@ -72,8 +73,7 @@ class TestParseExtractionResponse:
             parse_extraction_response(as_json([item]))
 
     def test_optional_fields_default_to_none(self) -> None:
-        item = {k: v for k, v in VALID_ITEM.items() if k in
-                ("type", "title", "content", "summary", "confidence")}
+        item = {k: v for k, v in VALID_ITEM.items() if k in REQUIRED_FIELDS}
 
         extracted = parse_extraction_response(as_json([item]))[0]
 
