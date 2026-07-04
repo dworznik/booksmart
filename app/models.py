@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Text, func
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -35,6 +35,39 @@ class Book(Base):
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class Chapter(Base):
+    """A detected top-level unit of a book's logical structure. Replaced wholesale
+    on each successful ingestion run."""
+
+    __tablename__ = "chapters"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    book_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("books.id", ondelete="CASCADE"))
+    position: Mapped[int]
+    title: Mapped[str]
+    source_line: Mapped[int | None]
+
+    sections: Mapped[list["Section"]] = relationship(
+        back_populates="chapter",
+        cascade="all, delete-orphan",
+        order_by="Section.position",
+    )
+
+
+class Section(Base):
+    __tablename__ = "sections"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    chapter_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("chapters.id", ondelete="CASCADE")
+    )
+    position: Mapped[int]
+    title: Mapped[str]
+    source_line: Mapped[int | None]
+
+    chapter: Mapped[Chapter] = relationship(back_populates="sections")
 
 
 class IngestionJob(Base):
