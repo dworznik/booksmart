@@ -13,6 +13,16 @@ from app.main import create_app
 
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n"
 
+HINT_FIELDS = (
+    "primary_topic",
+    "language",
+    "framework",
+    "methodology",
+    "notes",
+    "trust_level",
+    "intended_use",
+)
+
 
 def make_epub_bytes() -> bytes:
     buffer = io.BytesIO()
@@ -128,6 +138,137 @@ class TestRegisterBook:
             data={"author": "Anonymous"},
             files={"file": ("a.pdf", PDF_BYTES, "application/octet-stream")},
         )
+
+        assert response.status_code == 422
+
+
+class TestRegisterBookWithHints:
+    def test_hints_roundtrip(self, client: TestClient) -> None:
+        response = upload_book(
+            client,
+            primary_topic="software craftsmanship",
+            language="Python",
+            framework="FastAPI",
+            methodology="TDD",
+            notes="Read chapters 1-3 first",
+            trust_level="high",
+            intended_use="team onboarding",
+        )
+
+        assert response.status_code == 201
+        body = response.json()
+        assert body["primary_topic"] == "software craftsmanship"
+        assert body["language"] == "Python"
+        assert body["framework"] == "FastAPI"
+        assert body["methodology"] == "TDD"
+        assert body["notes"] == "Read chapters 1-3 first"
+        assert body["trust_level"] == "high"
+        assert body["intended_use"] == "team onboarding"
+
+    def test_hints_default_to_null(self, client: TestClient) -> None:
+        body = upload_book(client).json()
+
+        for field in HINT_FIELDS:
+            assert body[field] is None
+
+
+class TestUpdateBook:
+    def test_patch_updates_metadata_and_hints(self, client: TestClient) -> None:
+        created = upload_book(client).json()
+
+        response = client.patch(
+            f"/books/{created['id']}",
+            json={
+                "title": "Clean Code (annotated)",
+                "edition": "3rd",
+                "publication_year": 2010,
+                "primary_topic": "refactoring",
+                "trust_level": "medium",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["title"] == "Clean Code (annotated)"
+        assert body["edition"] == "3rd"
+        assert body["publication_year"] == 2010
+        assert body["primary_topic"] == "refactoring"
+        assert body["trust_level"] == "medium"
+
+    def test_patch_is_partial_absent_fields_unchanged(self, client: TestClient) -> None:
+        created = upload_book(
+            client, edition="2nd", isbn="9780132350884", notes="original notes"
+        ).json()
+
+        body = client.patch(f"/books/{created['id']}", json={"author": "R. C. Martin"}).json()
+
+        assert body["author"] == "R. C. Martin"
+        assert body["edition"] == "2nd"
+        assert body["isbn"] == "9780132350884"
+        assert body["notes"] == "original notes"
+
+    def test_patch_explicit_null_clears_field(self, client: TestClient) -> None:
+        created = upload_book(client, edition="2nd", notes="scratch this").json()
+
+        body = client.patch(
+            f"/books/{created['id']}", json={"edition": None, "notes": None}
+        ).json()
+
+        assert body["edition"] is None
+        assert body["notes"] is None
+
+    def test_patch_persists_across_fetches(self, client: TestClient) -> None:
+        created = upload_book(client).json()
+
+        client.patch(f"/books/{created['id']}", json={"methodology": "DDD"})
+
+        fetched = client.get(f"/books/{created['id']}").json()
+        assert fetched["methodology"] == "DDD"
+
+    def test_patch_after_upload_succeeds(self, client: TestClient) -> None:
+        # Ingestion states arrive in later slices; a fully uploaded book is the
+        # closest thing to "ingested" today. Metadata must stay editable in any
+        # state, so this test pins that down for the post-upload state.
+        created = upload_book(client).json()
+        assert created["checksum"]  # upload fully completed
+
+        response = client.patch(
+            f"/books/{created['id']}",
+            json={"title": "Updated After Upload", "intended_use": "reference"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["title"] == "Updated After Upload"
+        assert response.json()["intended_use"] == "reference"
+
+    def test_patch_unknown_book_returns_404(self, client: TestClient) -> None:
+        response = client.patch(
+            "/books/00000000-0000-0000-0000-000000000000", json={"title": "Ghost"}
+        )
+
+        assert response.status_code == 404
+
+    def test_patch_file_fields_rejected(self, client: TestClient) -> None:
+        created = upload_book(client).json()
+
+        for field in ("checksum", "file_hash", "original_filename", "file_format", "storage_path", "uploaded_at"):
+            response = client.patch(f"/books/{created['id']}", json={field: "tampered"})
+            assert response.status_code == 422, field
+
+        fetched = client.get(f"/books/{created['id']}").json()
+        assert fetched["checksum"] == created["checksum"]
+
+    def test_patch_null_title_rejected(self, client: TestClient) -> None:
+        created = upload_book(client).json()
+
+        response = client.patch(f"/books/{created['id']}", json={"title": None})
+
+        assert response.status_code == 422
+
+    def test_patch_null_author_rejected(self, client: TestClient) -> None:
+        created = upload_book(client).json()
+
+        response = client.patch(f"/books/{created['id']}", json={"author": None})
 
         assert response.status_code == 422
 

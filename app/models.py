@@ -19,6 +19,14 @@ class Book(Base):
     publication_year: Mapped[int | None]
     isbn: Mapped[str | None]
 
+    primary_topic: Mapped[str | None]
+    language: Mapped[str | None]
+    framework: Mapped[str | None]
+    methodology: Mapped[str | None]
+    notes: Mapped[str | None]
+    trust_level: Mapped[str | None]
+    intended_use: Mapped[str | None]
+
     original_filename: Mapped[str]
     file_format: Mapped[str]
     storage_path: Mapped[str]
