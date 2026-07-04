@@ -21,6 +21,15 @@ class StoredFile:
     file_hash: str
 
 
+def hash_stream(stream: BinaryIO) -> str:
+    """SHA-256 of the stream's content, leaving the stream rewound for reuse."""
+    sha256 = hashlib.sha256()
+    while chunk := stream.read(CHUNK_SIZE):
+        sha256.update(chunk)
+    stream.seek(0)
+    return sha256.hexdigest()
+
+
 class BookStorage:
     def __init__(self, storage_root: Path) -> None:
         self._books_dir = storage_root / "books"

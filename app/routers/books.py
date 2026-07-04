@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import Book, BookProfile, Chapter
 from app.schemas import BookOut, BookProfileOut, BookUpdate, ChapterOut
-from app.storage import BookStorage
+from app.storage import BookStorage, hash_stream
 
 router = APIRouter(prefix="/books", tags=["books"])
 
@@ -69,6 +69,18 @@ def register_book(
     storage: BookStorage = Depends(_storage),
 ) -> Book:
     file_format = _validated_format(file)
+
+    # Byte-identical content means duplicate, whatever the metadata says.
+    file_hash = hash_stream(file.file)
+    existing = db.scalars(select(Book).where(Book.file_hash == file_hash)).first()
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "A book with identical file content is already registered",
+                "existing_book_id": str(existing.id),
+            },
+        )
 
     book_id = uuid.uuid4()
     stored = storage.save_original(book_id, file.filename or f"book.{file_format}", file.file)
