@@ -61,3 +61,16 @@ class BookUpdate(BaseModel):
     def changes(self) -> dict[str, object]:
         """Only the fields explicitly provided in the request body."""
         return self.model_dump(exclude_unset=True)
+
+
+class IngestionJobOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    book_id: uuid.UUID
+    status: str
+    error: str | None
+    output_path: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
