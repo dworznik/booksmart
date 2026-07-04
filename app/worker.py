@@ -34,7 +34,7 @@ from app.llm import (
     build_llm_provider,
 )
 from app.models import Book, BookProfile, Chapter, IngestionJob, KnowledgeObject, Section
-from app.parsing import ParserChain, build_default_chain
+from app.parsing import EXTRACTION_VERSION, ParserChain, build_default_chain
 from app.profile import PROFILE_PROMPT_VERSION, PROFILE_SYSTEM_PROMPT, build_profile_prompt
 from app.storage import BookStorage
 from app.structure import detect_structure
@@ -73,6 +73,63 @@ def build_default_vector_store() -> VectorStore:
 EMBED_BATCH_SIZE = 128
 
 RecordType = Literal["chapter", "section", "knowledge_object"]
+
+Stage = Literal["parse", "structure", "profile", "extraction", "summaries", "embeddings"]
+
+# Which stages each job scope runs. Incremental scopes reuse upstream
+# artifacts; extraction pulls embeddings along because the replaced knowledge
+# objects would otherwise be left with stale or missing vectors.
+SCOPE_STAGES: dict[str, tuple[Stage, ...]] = {
+    "full": ("parse", "structure", "profile", "extraction", "summaries", "embeddings"),
+    "profile": ("profile",),
+    "extraction": ("extraction", "embeddings"),
+    "embeddings": ("embeddings",),
+}
+
+LLM_STAGES: frozenset[Stage] = frozenset({"profile", "extraction", "summaries"})
+MARKDOWN_STAGES: frozenset[Stage] = frozenset({"structure", "extraction", "summaries"})
+
+
+def _version_stamps(
+    stages: tuple[Stage, ...],
+    llm: LLMProvider | None,
+    embedder: EmbeddingProvider | None,
+) -> tuple[str, str | None, str | None]:
+    """(extraction_version, model_version, prompt_version) describing exactly
+    what this run used, limited to the stages it actually ran."""
+    models = []
+    if llm is not None and any(stage in LLM_STAGES for stage in stages):
+        models.append(f"llm={llm.model}")
+    if embedder is not None and "embeddings" in stages:
+        models.append(f"embedding={embedder.model}")
+    prompts = []
+    if "profile" in stages:
+        prompts.append(f"profile={PROFILE_PROMPT_VERSION}")
+    if "extraction" in stages:
+        prompts.append(f"extraction={EXTRACTION_PROMPT_VERSION}")
+    if "summaries" in stages:
+        prompts.append(f"summary={SUMMARY_PROMPT_VERSION}")
+    return EXTRACTION_VERSION, ",".join(models) or None, ",".join(prompts) or None
+
+
+def _latest_parsed_artifact(session: Session, book: Book) -> Path:
+    """The newest parsed-markdown artifact from the book's successful runs."""
+    path = session.scalars(
+        select(IngestionJob.output_path)
+        .where(
+            IngestionJob.book_id == book.id,
+            IngestionJob.status == "succeeded",
+            IngestionJob.output_path.is_not(None),
+        )
+        .order_by(IngestionJob.finished_at.desc())
+        .limit(1)
+    ).first()
+    if path is None:
+        raise RuntimeError("no parsed markdown artifact to reuse; run a full ingest first")
+    artifact = Path(path)
+    if not artifact.exists():
+        raise RuntimeError(f"parsed markdown artifact missing from storage: {artifact}")
+    return artifact
 
 
 def _book_chapters(session: Session, book: Book) -> list[Chapter]:
@@ -330,25 +387,50 @@ def process_one_job(
         def log(line: str) -> None:
             log_lines.append(f"{datetime.now(UTC).isoformat()} {line}")
 
+        stamps: tuple[str, str | None, str | None] = (EXTRACTION_VERSION, None, None)
         try:
             book = session.get(Book, job.book_id)
             if book is None:
                 raise RuntimeError(f"Book {job.book_id} no longer exists")
-            result = chain.extract(Path(book.storage_path), book.file_format, log)
-            job.output_path = str(storage.save_parsed(book.id, job.id, result.markdown))
-            job.parser_used = result.parser
-            _detect_and_replace_structure(session, book, result.markdown, log)
-            llm = llm or build_default_llm()
-            _generate_profile(session, book, llm, log)
-            _extract_knowledge(session, book, result.markdown, llm, log)
-            _summarize_structure(session, book, result.markdown, llm, log)
-            _generate_embeddings(
-                session,
-                book,
-                embedder or build_default_embedder(),
-                vector_store or build_default_vector_store(),
-                log,
-            )
+            stages = SCOPE_STAGES.get(job.scope)
+            if stages is None:
+                raise RuntimeError(f"Unknown job scope {job.scope!r}")
+            log(f"scope: {job.scope} -> stages {', '.join(stages)}")
+
+            if any(stage in LLM_STAGES for stage in stages):
+                llm = llm or build_default_llm()
+            if "embeddings" in stages:
+                embedder = embedder or build_default_embedder()
+                vector_store = vector_store or build_default_vector_store()
+            stamps = _version_stamps(stages, llm, embedder)
+
+            markdown: str | None = None
+            if "parse" in stages:
+                result = chain.extract(Path(book.storage_path), book.file_format, log)
+                markdown = result.markdown
+                job.output_path = str(storage.save_parsed(book.id, job.id, result.markdown))
+                job.parser_used = result.parser
+            elif any(stage in MARKDOWN_STAGES for stage in stages):
+                artifact = _latest_parsed_artifact(session, book)
+                markdown = artifact.read_text(encoding="utf-8")
+                job.output_path = str(artifact)
+                log(f"reuse: parsed markdown from {artifact}")
+
+            if "structure" in stages:
+                assert markdown is not None
+                _detect_and_replace_structure(session, book, markdown, log)
+            if "profile" in stages:
+                assert llm is not None
+                _generate_profile(session, book, llm, log)
+            if "extraction" in stages:
+                assert markdown is not None and llm is not None
+                _extract_knowledge(session, book, markdown, llm, log)
+            if "summaries" in stages:
+                assert markdown is not None and llm is not None
+                _summarize_structure(session, book, markdown, llm, log)
+            if "embeddings" in stages:
+                assert embedder is not None and vector_store is not None
+                _generate_embeddings(session, book, embedder, vector_store, log)
             job.status = "succeeded"
         except Exception as exc:
             # Discard partial stage writes (e.g. a structure delete whose
@@ -356,6 +438,8 @@ def process_one_job(
             session.rollback()
             job.status = "failed"
             job.error = f"{type(exc).__name__}: {exc}"
+        # Stamped outside the try so even failed runs record what they used.
+        job.extraction_version, job.model_version, job.prompt_version = stamps
         job.finished_at = datetime.now(UTC)
         try:
             storage.save_log(job.id, "".join(f"{line}\n" for line in log_lines))

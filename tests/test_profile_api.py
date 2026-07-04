@@ -39,6 +39,8 @@ def register_book_with_hints(client: TestClient) -> str:
 
 
 class ExplodingLLM:
+    model = "exploding-llm"
+
     def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
         raise RuntimeError("provider went down")
 

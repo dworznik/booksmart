@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -115,15 +115,26 @@ class KnowledgeObjectOut(BaseModel):
     created_at: datetime
 
 
+ReprocessScope = Literal["profile", "extraction", "embeddings", "full"]
+
+
+class ReprocessRequest(BaseModel):
+    scope: ReprocessScope
+
+
 class IngestionJobOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
     id: uuid.UUID
     book_id: uuid.UUID
+    scope: str
     status: str
     error: str | None
     output_path: str | None
     parser_used: str | None
+    extraction_version: str | None
+    model_version: str | None
+    prompt_version: str | None
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
