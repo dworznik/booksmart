@@ -89,6 +89,9 @@ class TestEmbeddingStage:
                 "About shallow modules.",
                 "How complexity shows up.",
             ]
+            for summarized in [*chapters, *sections]:
+                assert summarized.summary_model == "stub-llm-1"
+                assert summarized.summary_prompt_version == "1"
             objects = list(
                 session.scalars(
                     select(KnowledgeObject).where(KnowledgeObject.book_id == uuid.UUID(book_id))

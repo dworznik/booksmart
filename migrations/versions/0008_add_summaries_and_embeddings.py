@@ -19,8 +19,10 @@ EMBEDDED_TABLES = ("chapters", "sections", "knowledge_objects")
 
 
 def upgrade() -> None:
-    op.add_column("chapters", sa.Column("summary", sa.Text(), nullable=True))
-    op.add_column("sections", sa.Column("summary", sa.Text(), nullable=True))
+    for table in ("chapters", "sections"):
+        op.add_column(table, sa.Column("summary", sa.Text(), nullable=True))
+        op.add_column(table, sa.Column("summary_model", sa.String(), nullable=True))
+        op.add_column(table, sa.Column("summary_prompt_version", sa.String(), nullable=True))
     for table in EMBEDDED_TABLES:
         op.add_column(table, sa.Column("embedding_id", sa.Uuid(), nullable=True))
         op.add_column(table, sa.Column("embedding_model", sa.String(), nullable=True))
@@ -32,5 +34,7 @@ def downgrade() -> None:
         op.drop_column(table, "embedded_at")
         op.drop_column(table, "embedding_model")
         op.drop_column(table, "embedding_id")
-    op.drop_column("sections", "summary")
-    op.drop_column("chapters", "summary")
+    for table in ("chapters", "sections"):
+        op.drop_column(table, "summary_prompt_version")
+        op.drop_column(table, "summary_model")
+        op.drop_column(table, "summary")

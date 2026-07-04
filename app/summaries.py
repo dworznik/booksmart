@@ -8,6 +8,7 @@ whenever the prompt wording changes.
 
 import json
 
+from app.extraction import build_chapter_prompt
 from app.llm import strip_fences
 from app.models import Book, Chapter
 
@@ -58,15 +59,6 @@ def parse_summary_response(text: str, section_count: int) -> tuple[str, list[str
 
 
 def build_summary_prompt(book: Book, chapter: Chapter, body: str) -> str:
-    lines = [
-        f"Book: {book.title} by {book.author}",
-        f"Chapter {chapter.position + 1}: {chapter.title}",
-        "",
-        "Numbered sections in this chapter:",
-    ]
-    if chapter.sections:
-        lines.extend(f"{index}. {section.title}" for index, section in enumerate(chapter.sections))
-    else:
-        lines.append("(none detected)")
-    lines.extend(["", "Chapter text:", body, "", "Summarize the chapter and its sections as JSON."])
-    return "\n".join(lines)
+    return build_chapter_prompt(
+        book, chapter, body, "Summarize the chapter and its sections as JSON."
+    )

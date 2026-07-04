@@ -114,6 +114,12 @@ class OpenAIProvider:
         return LLMResponse(text=response.choices[0].message.content, model=response.model)
 
 
+def _resolve_gemini_key(api_key: str | None) -> str | None:
+    # The OpenAI SDK only knows OPENAI_API_KEY, so resolve Gemini's own
+    # conventional variable here instead of leaving it to the SDK.
+    return api_key or os.environ.get("GEMINI_API_KEY")
+
+
 class GeminiProvider(OpenAIProvider):
     def __init__(
         self,
@@ -121,11 +127,9 @@ class GeminiProvider(OpenAIProvider):
         api_key: str | None = None,
         client: openai.OpenAI | None = None,
     ) -> None:
-        # The OpenAI SDK only knows OPENAI_API_KEY, so resolve Gemini's own
-        # conventional variable here instead of leaving it to the SDK.
         super().__init__(
             model,
-            api_key=api_key or os.environ.get("GEMINI_API_KEY"),
+            api_key=_resolve_gemini_key(api_key),
             base_url=GEMINI_BASE_URL,
             client=client,
         )
@@ -162,7 +166,7 @@ class GeminiEmbeddingProvider(OpenAIEmbeddingProvider):
     ) -> None:
         super().__init__(
             model,
-            api_key=api_key or os.environ.get("GEMINI_API_KEY"),
+            api_key=_resolve_gemini_key(api_key),
             base_url=GEMINI_BASE_URL,
             client=client,
         )

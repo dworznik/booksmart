@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from qdrant_client import QdrantClient
 from sqlalchemy import create_engine, delete, select
@@ -58,11 +59,28 @@ def build_default_llm() -> LLMProvider:
 
 
 def build_default_embedder() -> EmbeddingProvider:
+    """Test seam, like build_default_llm."""
     return build_embedding_provider(Settings())
 
 
 def build_default_vector_store() -> VectorStore:
+    """Test seam, like build_default_llm."""
     return VectorStore(QdrantClient(url=Settings().qdrant_url))
+
+
+# OpenAI caps embeddings requests at 2048 inputs; stay far below it so token
+# limits don't bite either.
+EMBED_BATCH_SIZE = 128
+
+RecordType = Literal["chapter", "section", "knowledge_object"]
+
+
+def _book_chapters(session: Session, book: Book) -> list[Chapter]:
+    return list(
+        session.scalars(
+            select(Chapter).where(Chapter.book_id == book.id).order_by(Chapter.position)
+        )
+    )
 
 
 def _claim_next_job(session: Session) -> IngestionJob | None:
@@ -113,12 +131,7 @@ def _generate_profile(
     """Profile stage: append a new versioned profile from metadata, hints, and structure."""
     log("profile: generating book profile")
     try:
-        chapters = list(
-            session.scalars(
-                select(Chapter).where(Chapter.book_id == book.id).order_by(Chapter.position)
-            )
-        )
-        prompt = build_profile_prompt(book, chapters)
+        prompt = build_profile_prompt(book, _book_chapters(session, book))
         response = llm.complete(prompt, system=PROFILE_SYSTEM_PROMPT)
         session.add(
             BookProfile(
@@ -144,11 +157,7 @@ def _extract_knowledge(
     """Extraction stage: replace the book's knowledge objects, one LLM call per chapter."""
     log("extraction: extracting knowledge objects")
     try:
-        chapters = list(
-            session.scalars(
-                select(Chapter).where(Chapter.book_id == book.id).order_by(Chapter.position)
-            )
-        )
+        chapters = _book_chapters(session, book)
         session.execute(delete(KnowledgeObject).where(KnowledgeObject.book_id == book.id))
         if not chapters:
             log("extraction: no chapters detected; nothing to extract")
@@ -203,11 +212,7 @@ def _summarize_structure(
     """Summary stage: one LLM call per chapter fills chapter/section summaries."""
     log("summaries: summarizing chapters and sections")
     try:
-        chapters = list(
-            session.scalars(
-                select(Chapter).where(Chapter.book_id == book.id).order_by(Chapter.position)
-            )
-        )
+        chapters = _book_chapters(session, book)
         if not chapters:
             log("summaries: no chapters detected; nothing to summarize")
             return
@@ -219,8 +224,13 @@ def _summarize_structure(
                 response.text, len(chapter.sections)
             )
             chapter.summary = chapter_summary
+            chapter.summary_model = response.model
+            chapter.summary_prompt_version = SUMMARY_PROMPT_VERSION
             for section, summary in zip(chapter.sections, section_summaries, strict=True):
                 section.summary = summary
+                if summary is not None:
+                    section.summary_model = response.model
+                    section.summary_prompt_version = SUMMARY_PROMPT_VERSION
         log(f"summaries: {len(chapters)} chapters summarized (prompt v{SUMMARY_PROMPT_VERSION})")
     except Exception as exc:
         log(f"summaries: failed — {type(exc).__name__}: {exc}")
@@ -231,23 +241,19 @@ def _generate_embeddings(
     session: Session,
     book: Book,
     embedder: EmbeddingProvider,
-    vectors: VectorStore,
+    vector_store: VectorStore,
     log: Callable[[str], None],
 ) -> None:
     """Embedding stage: embed chapter/section summaries and knowledge objects,
     store the vectors in Qdrant, and link each row via embedding_id."""
     log("embeddings: generating embeddings")
     try:
-        chapters = list(
-            session.scalars(
-                select(Chapter).where(Chapter.book_id == book.id).order_by(Chapter.position)
-            )
-        )
+        chapters = _book_chapters(session, book)
         objects = list(
             session.scalars(select(KnowledgeObject).where(KnowledgeObject.book_id == book.id))
         )
 
-        items: list[tuple[Chapter | Section | KnowledgeObject, str, str]] = []
+        items: list[tuple[Chapter | Section | KnowledgeObject, RecordType, str]] = []
         for chapter in chapters:
             if chapter.summary:
                 items.append((chapter, "chapter", chapter.summary))
@@ -265,11 +271,14 @@ def _generate_embeddings(
             )
 
         if not items:
-            vectors.replace_book_points(str(book.id), [])
+            vector_store.replace_book_points(str(book.id), [])
             log("embeddings: nothing to embed")
             return
 
-        embedded_vectors = embedder.embed([text for _, _, text in items])
+        texts = [text for _, _, text in items]
+        embedded_vectors: list[list[float]] = []
+        for start in range(0, len(texts), EMBED_BATCH_SIZE):
+            embedded_vectors.extend(embedder.embed(texts[start : start + EMBED_BATCH_SIZE]))
         embedded_at = datetime.now(UTC)
         records: list[VectorRecord] = []
         for (row, record_type, text), vector in zip(items, embedded_vectors, strict=True):
@@ -289,7 +298,7 @@ def _generate_embeddings(
                     },
                 )
             )
-        vectors.replace_book_points(str(book.id), records)
+        vector_store.replace_book_points(str(book.id), records)
         log(f"embeddings: {len(records)} vectors stored ({embedder.model})")
     except Exception as exc:
         log(f"embeddings: failed — {type(exc).__name__}: {exc}")

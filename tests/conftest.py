@@ -12,10 +12,9 @@ import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
 from fastapi.testclient import TestClient
+from qdrant_client import QdrantClient
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
-
-from qdrant_client import QdrantClient
 
 from app.config import Settings
 from app.extraction import EXTRACTION_SYSTEM_PROMPT
@@ -94,7 +93,9 @@ class StubLLMProvider:
 
     defaults: dict[str, str] = {
         EXTRACTION_SYSTEM_PROMPT: "[]",
-        SUMMARY_SYSTEM_PROMPT: '{"chapter_summary": "A stubbed chapter summary.", "section_summaries": []}',
+        SUMMARY_SYSTEM_PROMPT: (
+            '{"chapter_summary": "A stubbed chapter summary.", "section_summaries": []}'
+        ),
     }
 
     def __init__(self, text: str = "A stubbed book profile.", model: str = "stub-llm-1") -> None:

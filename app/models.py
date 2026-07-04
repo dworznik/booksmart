@@ -49,6 +49,8 @@ class Chapter(Base):
     title: Mapped[str]
     source_line: Mapped[int | None]
     summary: Mapped[str | None] = mapped_column(Text)
+    summary_model: Mapped[str | None]
+    summary_prompt_version: Mapped[str | None]
     embedding_id: Mapped[uuid.UUID | None]
     embedding_model: Mapped[str | None]
     embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -71,6 +73,8 @@ class Section(Base):
     title: Mapped[str]
     source_line: Mapped[int | None]
     summary: Mapped[str | None] = mapped_column(Text)
+    summary_model: Mapped[str | None]
+    summary_prompt_version: Mapped[str | None]
     embedding_id: Mapped[uuid.UUID | None]
     embedding_model: Mapped[str | None]
     embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -148,7 +148,11 @@ def resolve_source(chapter: Chapter, section_index: int | None) -> tuple[Section
     return section, source_location
 
 
-def build_extraction_prompt(book: Book, chapter: Chapter, body: str) -> str:
+def build_chapter_prompt(book: Book, chapter: Chapter, body: str, instruction: str) -> str:
+    """Shared prompt scaffold for per-chapter stages: book/chapter header, the
+    numbered section list (indexes matter - both extraction's section_index and
+    the summary stage's section alignment refer to it), the chapter text, and
+    the stage's closing instruction."""
     lines = [
         f"Book: {book.title} by {book.author}",
         f"Chapter {chapter.position + 1}: {chapter.title}",
@@ -159,5 +163,9 @@ def build_extraction_prompt(book: Book, chapter: Chapter, body: str) -> str:
         lines.extend(f"{index}. {section.title}" for index, section in enumerate(chapter.sections))
     else:
         lines.append("(none detected)")
-    lines.extend(["", "Chapter text:", body, "", "Extract the knowledge objects as JSON."])
+    lines.extend(["", "Chapter text:", body, "", instruction])
     return "\n".join(lines)
+
+
+def build_extraction_prompt(book: Book, chapter: Chapter, body: str) -> str:
+    return build_chapter_prompt(book, chapter, body, "Extract the knowledge objects as JSON.")
