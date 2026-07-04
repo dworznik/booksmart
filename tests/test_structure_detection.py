@@ -160,6 +160,25 @@ class TestChapterNumberTitleMerging:
 
         assert outline(markdown) == [("Chapter 1", []), ("Chapter 2", [])]
 
+    def test_bare_number_chapter_with_body_does_not_merge_into_next_heading(self) -> None:
+        markdown = (
+            "# Chapter 2\n"
+            "A full chapter body follows the bare number heading.\n"
+            "It runs for several lines before the next chapter starts.\n"
+            "More prose here.\n"
+            "# Epilogue\n"
+        )
+
+        assert outline(markdown) == [("Chapter 2", []), ("Epilogue", [])]
+
+    def test_pair_separated_by_blank_line_still_merges(self) -> None:
+        markdown = "# Chapter 4\n\n# Modules Should Be Deep\n# Chapter 5\n\n# Interfaces\n"
+
+        assert outline(markdown) == [
+            ("Chapter 4: Modules Should Be Deep", []),
+            ("Chapter 5: Interfaces", []),
+        ]
+
     def test_number_heading_followed_by_section_does_not_merge(self) -> None:
         markdown = "# Chapter 1\n## A Section\n# Chapter 2\n## Another\n"
 

@@ -8,10 +8,6 @@ and falls through. OCR needs the tesseract binary plus its tessdata files.
 import importlib
 import os
 import shutil
-
-# Version of the text-extraction pipeline (parser chain + structure handling).
-# Bump when parsing behavior changes so reprocessed runs are distinguishable.
-EXTRACTION_VERSION = "1"
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from glob import glob
@@ -20,6 +16,11 @@ from typing import Any, Protocol
 
 import pymupdf
 import pymupdf4llm
+
+# Version of the text-extraction pipeline (parser chain + structure handling),
+# stamped on every ingestion job as extraction_version. Bump when parsing
+# behavior changes so reprocessed runs are distinguishable in history.
+EXTRACTION_VERSION = "1"
 
 
 class ParserUnavailable(Exception):

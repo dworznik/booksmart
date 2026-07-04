@@ -128,6 +128,12 @@ def _headings(markdown: str) -> list[Heading]:
 CHAPTER_NUMBER = re.compile(r"^(chapter|part)\s+(\d+|[ivxlcdm]+)\.?$", re.IGNORECASE)
 
 
+# A number/title pair sits on adjacent lines, at most a blank line or two
+# apart; a larger gap means the bare number heading owns a real chapter body
+# and the next heading starts a different chapter.
+MERGE_MAX_LINE_GAP = 3
+
+
 def _merge_number_title_pairs(headings: list[Heading], chapter_level: int) -> list[Heading]:
     """Books often typeset the chapter number and its title as two consecutive
     same-level headings. Merge such a pair into one heading ("Chapter 4:
@@ -143,6 +149,7 @@ def _merge_number_title_pairs(headings: list[Heading], chapter_level: int) -> li
             and following is not None
             and following.level == chapter_level
             and not CHAPTER_NUMBER.match(following.title)
+            and following.line - heading.line <= MERGE_MAX_LINE_GAP
         ):
             merged.append(
                 Heading(

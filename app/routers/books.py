@@ -83,7 +83,9 @@ def register_book(
         )
 
     book_id = uuid.uuid4()
-    stored = storage.save_original(book_id, file.filename or f"book.{file_format}", file.file)
+    stored = storage.save_original(
+        book_id, file.filename or f"book.{file_format}", file.file, file_hash
+    )
     book = Book(
         id=book_id,
         title=title,
