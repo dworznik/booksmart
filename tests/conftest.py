@@ -16,6 +16,7 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
+from app.llm import LLMResponse
 from app.main import create_app
 
 TEST_DATABASE_URL = os.environ.get(
@@ -75,3 +76,31 @@ def db_engine(database_url: str) -> Iterator[Engine]:
 def session_factory(db_engine: Engine) -> sessionmaker[Session]:
     """Session factory for driving the worker synchronously in tests."""
     return sessionmaker(bind=db_engine)
+
+
+class StubLLMProvider:
+    """Canned-response LLM provider that records every prompt it receives."""
+
+    def __init__(self, text: str = "A stubbed book profile.", model: str = "stub-llm-1") -> None:
+        self.text = text
+        self.model = model
+        self.calls: list[tuple[str, str | None]] = []
+
+    def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
+        self.calls.append((prompt, system))
+        return LLMResponse(text=self.text, model=self.model)
+
+
+@pytest.fixture()
+def stub_llm() -> StubLLMProvider:
+    return StubLLMProvider()
+
+
+@pytest.fixture(autouse=True)
+def _never_call_real_llm(monkeypatch: pytest.MonkeyPatch, stub_llm: StubLLMProvider) -> None:
+    """The worker builds a real provider when none is injected; tests never do that.
+
+    The same instance as the `stub_llm` fixture is installed, so tests can
+    inspect the prompts the worker sent without passing the stub explicitly.
+    """
+    monkeypatch.setattr("app.worker.build_default_llm", lambda: stub_llm)

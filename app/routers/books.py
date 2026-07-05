@@ -8,8 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Book, Chapter
-from app.schemas import BookOut, BookUpdate, ChapterOut
+from app.models import Book, BookProfile, Chapter
+from app.schemas import BookOut, BookProfileOut, BookUpdate, ChapterOut
 from app.storage import BookStorage
 
 router = APIRouter(prefix="/books", tags=["books"])
@@ -125,6 +125,22 @@ def get_book_structure(book_id: uuid.UUID, db: Session = Depends(get_db)) -> lis
             select(Chapter).where(Chapter.book_id == book_id).order_by(Chapter.position)
         )
     )
+
+
+@router.get("/{book_id}/profile", response_model=BookProfileOut)
+def get_book_profile(book_id: uuid.UUID, db: Session = Depends(get_db)) -> BookProfile:
+    """The latest generated profile; older versions stay in the table as history."""
+    if db.get(Book, book_id) is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+    profile = db.scalars(
+        select(BookProfile)
+        .where(BookProfile.book_id == book_id)
+        .order_by(BookProfile.created_at.desc(), BookProfile.id.desc())
+        .limit(1)
+    ).first()
+    if profile is None:
+        raise HTTPException(status_code=404, detail="No profile generated for this book yet")
+    return profile
 
 
 @router.patch("/{book_id}", response_model=BookOut)

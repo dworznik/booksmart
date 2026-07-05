@@ -52,8 +52,13 @@ jobs:
       - name: Build service images
         run: docker compose build
 
+      # Fake providers: the smoke test exercises the full pipeline through the
+      # real containers without API keys, network calls, or per-run cost.
       - name: Start stack
         run: docker compose up -d
+        env:
+          BOOKSMART_LLM_PROVIDER: fake
+          BOOKSMART_EMBEDDING_PROVIDER: fake
 
       - name: Wait for API
         run: |
