@@ -10,6 +10,7 @@ storage/logs/. Run with `python -m app.worker`.
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -30,6 +31,7 @@ from app.extraction import (
 from app.llm import (
     EmbeddingProvider,
     LLMProvider,
+    LLMResponse,
     build_embedding_provider,
     build_llm_provider,
 )
@@ -88,6 +90,28 @@ SCOPE_STAGES: dict[str, tuple[Stage, ...]] = {
 
 LLM_STAGES: frozenset[Stage] = frozenset({"profile", "extraction", "summaries"})
 MARKDOWN_STAGES: frozenset[Stage] = frozenset({"structure", "extraction", "summaries"})
+
+
+def _show_count(count: int | None) -> str:
+    return str(count) if count is not None else "?"
+
+
+@dataclass
+class TokenUsage:
+    """Provider-reported LLM usage summed across a job's calls. Unreported
+    counts (None) log as '?' and add zero, so totals stay honest lower bounds."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    def add(self, response: LLMResponse) -> str:
+        """Accumulate one call's usage; returns the log fragment describing it."""
+        self.input_tokens += response.input_tokens or 0
+        self.output_tokens += response.output_tokens or 0
+        return (
+            f"tokens in={_show_count(response.input_tokens)} "
+            f"out={_show_count(response.output_tokens)}"
+        )
 
 
 def _version_stamps(
@@ -184,13 +208,18 @@ def _detect_and_replace_structure(
 
 
 def _generate_profile(
-    session: Session, book: Book, llm: LLMProvider, log: Callable[[str], None]
+    session: Session,
+    book: Book,
+    llm: LLMProvider,
+    usage: TokenUsage,
+    log: Callable[[str], None],
 ) -> None:
     """Profile stage: append a new versioned profile from metadata, hints, and structure."""
     log("profile: generating book profile")
     try:
         prompt = build_profile_prompt(book, _book_chapters(session, book))
         response = llm.complete(prompt, system=PROFILE_SYSTEM_PROMPT)
+        log(f"profile: {usage.add(response)}")
         session.add(
             BookProfile(
                 book_id=book.id,
@@ -210,6 +239,7 @@ def _extract_knowledge(
     book: Book,
     markdown: str,
     llm: LLMProvider,
+    usage: TokenUsage,
     log: Callable[[str], None],
 ) -> None:
     """Extraction stage: replace the book's knowledge objects, one LLM call per chapter."""
@@ -225,6 +255,7 @@ def _extract_knowledge(
             response = llm.complete(
                 build_extraction_prompt(book, chapter, body), system=EXTRACTION_SYSTEM_PROMPT
             )
+            log(f"extraction: chapter {chapter.position + 1} {usage.add(response)}")
             for extracted in parse_extraction_response(response.text):
                 section, source_location = resolve_source(chapter, extracted.section_index)
                 if extracted.section_index is not None and section is None:
@@ -265,6 +296,7 @@ def _summarize_structure(
     book: Book,
     markdown: str,
     llm: LLMProvider,
+    usage: TokenUsage,
     log: Callable[[str], None],
 ) -> None:
     """Summary stage: one LLM call per chapter fills chapter/section summaries."""
@@ -278,6 +310,7 @@ def _summarize_structure(
             response = llm.complete(
                 build_summary_prompt(book, chapter, body), system=SUMMARY_SYSTEM_PROMPT
             )
+            log(f"summaries: chapter {chapter.position + 1} {usage.add(response)}")
             chapter_summary, section_summaries = parse_summary_response(
                 response.text, len(chapter.sections)
             )
@@ -388,6 +421,7 @@ def process_one_job(
             log_lines.append(f"{datetime.now(UTC).isoformat()} {line}")
 
         stamps: tuple[str, str | None, str | None] = (EXTRACTION_VERSION, None, None)
+        usage: TokenUsage | None = None
         try:
             book = session.get(Book, job.book_id)
             if book is None:
@@ -399,6 +433,7 @@ def process_one_job(
 
             if any(stage in LLM_STAGES for stage in stages):
                 llm = llm or build_default_llm()
+                usage = TokenUsage()
             if "embeddings" in stages:
                 embedder = embedder or build_default_embedder()
                 vector_store = vector_store or build_default_vector_store()
@@ -420,14 +455,14 @@ def process_one_job(
                 assert markdown is not None
                 _detect_and_replace_structure(session, book, markdown, log)
             if "profile" in stages:
-                assert llm is not None
-                _generate_profile(session, book, llm, log)
+                assert llm is not None and usage is not None
+                _generate_profile(session, book, llm, usage, log)
             if "extraction" in stages:
-                assert markdown is not None and llm is not None
-                _extract_knowledge(session, book, markdown, llm, log)
+                assert markdown is not None and llm is not None and usage is not None
+                _extract_knowledge(session, book, markdown, llm, usage, log)
             if "summaries" in stages:
-                assert markdown is not None and llm is not None
-                _summarize_structure(session, book, markdown, llm, log)
+                assert markdown is not None and llm is not None and usage is not None
+                _summarize_structure(session, book, markdown, llm, usage, log)
             if "embeddings" in stages:
                 assert embedder is not None and vector_store is not None
                 _generate_embeddings(session, book, embedder, vector_store, log)
@@ -440,6 +475,9 @@ def process_one_job(
             job.error = f"{type(exc).__name__}: {exc}"
         # Stamped outside the try so even failed runs record what they used.
         job.extraction_version, job.model_version, job.prompt_version = stamps
+        if usage is not None:
+            job.input_tokens = usage.input_tokens
+            job.output_tokens = usage.output_tokens
         job.finished_at = datetime.now(UTC)
         try:
             storage.save_log(job.id, "".join(f"{line}\n" for line in log_lines))

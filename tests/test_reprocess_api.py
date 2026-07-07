@@ -320,6 +320,67 @@ class TestFullScope:
         assert job["prompt_version"] == "profile=1,extraction=1,summary=1"
 
 
+class TestTokenUsage:
+    """The stub LLM reports 100 in / 10 out per call; the structured test book
+    has 2 chapters, so a full ingest makes 5 LLM calls (1 profile + 2
+    extraction + 2 summaries)."""
+
+    def test_full_ingest_accumulates_token_totals_on_job(
+        self,
+        client: TestClient,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        stub_llm: StubLLMProvider,
+    ) -> None:
+        _, job = full_ingest(client, session_factory, settings, stub_llm)
+
+        assert job["input_tokens"] == 500
+        assert job["output_tokens"] == 50
+
+    def test_profile_scope_counts_its_single_call(
+        self,
+        client: TestClient,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        stub_llm: StubLLMProvider,
+    ) -> None:
+        book_id, _ = full_ingest(client, session_factory, settings, stub_llm)
+
+        job = reprocess(client, session_factory, settings, book_id, "profile")
+
+        assert job["input_tokens"] == 100
+        assert job["output_tokens"] == 10
+
+    def test_llm_free_scope_reports_no_token_usage(
+        self,
+        client: TestClient,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        stub_llm: StubLLMProvider,
+    ) -> None:
+        book_id, _ = full_ingest(client, session_factory, settings, stub_llm)
+
+        job = reprocess(client, session_factory, settings, book_id, "embeddings")
+
+        assert job["input_tokens"] is None
+        assert job["output_tokens"] is None
+
+    def test_each_call_logs_its_usage_in_the_job_log(
+        self,
+        client: TestClient,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        stub_llm: StubLLMProvider,
+    ) -> None:
+        _, job = full_ingest(client, session_factory, settings, stub_llm)
+
+        log = (Path(settings.storage_root) / "logs" / f"{job['id']}.log").read_text(
+            encoding="utf-8"
+        )
+
+        assert log.count("tokens in=100 out=10") == 5
+
+
 class TestIngestionHistory:
     def test_history_accumulates_across_runs_with_scopes_and_versions(
         self,

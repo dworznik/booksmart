@@ -155,6 +155,10 @@ class IngestionJob(Base):
     extraction_version: Mapped[str | None]
     model_version: Mapped[str | None]
     prompt_version: Mapped[str | None]
+    # Summed provider-reported LLM usage across the run's calls; NULL when the
+    # scope made no LLM calls.
+    input_tokens: Mapped[int | None]
+    output_tokens: Mapped[int | None]
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

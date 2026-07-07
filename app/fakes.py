@@ -54,7 +54,7 @@ class FakeLLMProvider:
 
     def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
         text = STAGE_RESPONSES.get(system or "", DEFAULT_RESPONSE)
-        return LLMResponse(text=text, model=self.model)
+        return LLMResponse(text=text, model=self.model, input_tokens=0, output_tokens=0)
 
 
 class FakeEmbeddingProvider:

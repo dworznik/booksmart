@@ -59,6 +59,10 @@ class LLMError(RuntimeError):
 class LLMResponse:
     text: str
     model: str
+    # Billable token counts as reported by the provider; None when the
+    # provider did not report usage.
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 class LLMProvider(Protocol):
@@ -87,7 +91,12 @@ class AnthropicProvider:
         if response.stop_reason == "refusal":
             raise LLMError(f"{self.model} refused the request")
         text = "".join(block.text for block in response.content if block.type == "text")
-        return LLMResponse(text=text, model=response.model)
+        return LLMResponse(
+            text=text,
+            model=response.model,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+        )
 
 
 class OpenAIProvider:
@@ -113,7 +122,13 @@ class OpenAIProvider:
         )
         if not response.choices or response.choices[0].message.content is None:
             raise LLMError(f"{self.model} returned an empty completion")
-        return LLMResponse(text=response.choices[0].message.content, model=response.model)
+        usage = response.usage
+        return LLMResponse(
+            text=response.choices[0].message.content,
+            model=response.model,
+            input_tokens=usage.prompt_tokens if usage else None,
+            output_tokens=usage.completion_tokens if usage else None,
+        )
 
 
 def _resolve_gemini_key(api_key: str | None) -> str | None:

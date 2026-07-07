@@ -134,6 +134,14 @@ class TestFakeProvider:
         assert response.text
         assert response.model == "fake-llm-1"
 
+    def test_fake_provider_reports_zero_token_usage(self) -> None:
+        provider = build_llm_provider(Settings(llm_provider="fake"))
+
+        response = provider.complete("anything")
+
+        assert response.input_tokens == 0
+        assert response.output_tokens == 0
+
     def test_fake_extraction_response_parses_as_knowledge_objects(self) -> None:
         provider = build_llm_provider(Settings(llm_provider="fake"))
 
@@ -191,6 +199,7 @@ class TestAnthropicProvider:
                     SimpleNamespace(type="text", text="Part one. "),
                     SimpleNamespace(type="text", text="Part two."),
                 ],
+                usage=SimpleNamespace(input_tokens=1200, output_tokens=34),
             )
 
         provider = AnthropicProvider(
@@ -202,6 +211,8 @@ class TestAnthropicProvider:
 
         assert response.text == "Part one. Part two."
         assert response.model == "claude-opus-4-8"
+        assert response.input_tokens == 1200
+        assert response.output_tokens == 34
         assert captured["model"] == "claude-opus-4-8"
         assert captured["system"] == "You are a librarian."
         assert captured["messages"] == [{"role": "user", "content": "Describe the book."}]
@@ -231,6 +242,7 @@ class TestOpenAIProvider:
             return SimpleNamespace(
                 model="gpt-5.5",
                 choices=[SimpleNamespace(message=SimpleNamespace(content="The profile."))],
+                usage=SimpleNamespace(prompt_tokens=850, completion_tokens=120),
             )
 
         provider = OpenAIProvider(
@@ -244,11 +256,35 @@ class TestOpenAIProvider:
 
         assert response.text == "The profile."
         assert response.model == "gpt-5.5"
+        assert response.input_tokens == 850
+        assert response.output_tokens == 120
         assert captured["model"] == "gpt-5.5"
         assert captured["messages"] == [
             {"role": "system", "content": "You are a librarian."},
             {"role": "user", "content": "Describe the book."},
         ]
+
+    def test_missing_usage_yields_unknown_token_counts(self) -> None:
+        # The OpenAI SDK types usage as optional; absence must not break calls.
+        provider = OpenAIProvider(
+            model="gpt-5.5",
+            client=SimpleNamespace(  # type: ignore[arg-type]
+                chat=SimpleNamespace(
+                    completions=SimpleNamespace(
+                        create=lambda **kwargs: SimpleNamespace(
+                            model="gpt-5.5",
+                            choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+                            usage=None,
+                        )
+                    )
+                )
+            ),
+        )
+
+        response = provider.complete("Describe the book.")
+
+        assert response.input_tokens is None
+        assert response.output_tokens is None
 
     def test_empty_completion_raises(self) -> None:
         provider = OpenAIProvider(

@@ -107,14 +107,25 @@ class StubLLMProvider:
     def queue(self, system: str, *responses: str) -> None:
         self.queues.setdefault(system, []).extend(responses)
 
+    # Fixed per-call usage so tests can assert exact accumulated totals.
+    INPUT_TOKENS_PER_CALL = 100
+    OUTPUT_TOKENS_PER_CALL = 10
+
     def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
         self.calls.append((prompt, system))
         queued = self.queues.get(system or "")
         if queued:
-            return LLMResponse(text=queued.pop(0), model=self.model)
-        if system in self.defaults:
-            return LLMResponse(text=self.defaults[system], model=self.model)
-        return LLMResponse(text=self.text, model=self.model)
+            text = queued.pop(0)
+        elif system in self.defaults:
+            text = self.defaults[system]
+        else:
+            text = self.text
+        return LLMResponse(
+            text=text,
+            model=self.model,
+            input_tokens=self.INPUT_TOKENS_PER_CALL,
+            output_tokens=self.OUTPUT_TOKENS_PER_CALL,
+        )
 
 
 @pytest.fixture()

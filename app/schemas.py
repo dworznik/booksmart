@@ -135,6 +135,8 @@ class IngestionJobOut(BaseModel):
     extraction_version: str | None
     model_version: str | None
     prompt_version: str | None
+    input_tokens: int | None
+    output_tokens: int | None
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
