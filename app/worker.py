@@ -72,9 +72,9 @@ def build_default_vector_store() -> VectorStore:
     return VectorStore(QdrantClient(url=Settings().qdrant_url))
 
 
-# OpenAI caps embeddings requests at 2048 inputs; stay far below it so token
-# limits don't bite either.
-EMBED_BATCH_SIZE = 128
+# The tightest provider limit wins: Gemini rejects batches over 100 inputs,
+# OpenAI caps at 2048. Staying at 100 also keeps token limits far away.
+EMBED_BATCH_SIZE = 100
 
 RecordType = Literal["chapter", "section", "knowledge_object"]
 
