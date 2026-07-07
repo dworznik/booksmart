@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeVar
 
 from qdrant_client import QdrantClient
 from sqlalchemy import create_engine, delete, select
@@ -23,6 +23,7 @@ from app.config import Settings
 from app.extraction import (
     EXTRACTION_PROMPT_VERSION,
     EXTRACTION_SYSTEM_PROMPT,
+    ExtractionError,
     build_extraction_prompt,
     iter_chapter_bodies,
     parse_extraction_response,
@@ -43,6 +44,7 @@ from app.structure import detect_structure
 from app.summaries import (
     SUMMARY_PROMPT_VERSION,
     SUMMARY_SYSTEM_PROMPT,
+    SummaryError,
     build_summary_prompt,
     parse_summary_response,
 )
@@ -112,6 +114,33 @@ class TokenUsage:
             f"tokens in={_show_count(response.input_tokens)} "
             f"out={_show_count(response.output_tokens)}"
         )
+
+
+ParsedT = TypeVar("ParsedT")
+
+
+def _complete_and_parse(
+    llm: LLMProvider,
+    prompt: str,
+    system: str,
+    parse: Callable[[str], ParsedT],
+    label: str,
+    usage: TokenUsage,
+    log: Callable[[str], None],
+) -> tuple[ParsedT, LLMResponse]:
+    """One LLM call plus its parse, retried once on an unparseable response —
+    a model's occasional bad sample shouldn't roll back a whole multi-chapter
+    run. Both attempts are logged and counted; the second failure propagates."""
+    for attempt in (1, 2):
+        response = llm.complete(prompt, system=system)
+        log(f"{label} {usage.add(response)}")
+        try:
+            return parse(response.text), response
+        except (ExtractionError, SummaryError) as exc:
+            if attempt == 2:
+                raise
+            log(f"{label} response unparseable ({exc}); retrying once")
+    raise RuntimeError("unreachable")
 
 
 def _version_stamps(
@@ -252,11 +281,16 @@ def _extract_knowledge(
             return
         total = 0
         for chapter, body in iter_chapter_bodies(chapters, markdown):
-            response = llm.complete(
-                build_extraction_prompt(book, chapter, body), system=EXTRACTION_SYSTEM_PROMPT
+            extracted_objects, response = _complete_and_parse(
+                llm,
+                build_extraction_prompt(book, chapter, body),
+                EXTRACTION_SYSTEM_PROMPT,
+                parse_extraction_response,
+                f"extraction: chapter {chapter.position + 1}",
+                usage,
+                log,
             )
-            log(f"extraction: chapter {chapter.position + 1} {usage.add(response)}")
-            for extracted in parse_extraction_response(response.text):
+            for extracted in extracted_objects:
                 section, source_location = resolve_source(chapter, extracted.section_index)
                 if extracted.section_index is not None and section is None:
                     log(
@@ -307,12 +341,19 @@ def _summarize_structure(
             log("summaries: no chapters detected; nothing to summarize")
             return
         for chapter, body in iter_chapter_bodies(chapters, markdown):
-            response = llm.complete(
-                build_summary_prompt(book, chapter, body), system=SUMMARY_SYSTEM_PROMPT
-            )
-            log(f"summaries: chapter {chapter.position + 1} {usage.add(response)}")
-            chapter_summary, section_summaries = parse_summary_response(
-                response.text, len(chapter.sections)
+            section_count = len(chapter.sections)
+
+            def parse_for_chapter(text: str, count: int = section_count) -> tuple[str, list[str | None]]:
+                return parse_summary_response(text, count)
+
+            (chapter_summary, section_summaries), response = _complete_and_parse(
+                llm,
+                build_summary_prompt(book, chapter, body),
+                SUMMARY_SYSTEM_PROMPT,
+                parse_for_chapter,
+                f"summaries: chapter {chapter.position + 1}",
+                usage,
+                log,
             )
             chapter.summary = chapter_summary
             chapter.summary_model = response.model

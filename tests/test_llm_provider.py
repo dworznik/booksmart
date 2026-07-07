@@ -64,6 +64,47 @@ class TestProviderSelection:
         with pytest.raises(ValueError, match="hal9000"):
             build_llm_provider(make_settings(llm_provider="hal9000"))
 
+    def test_reasoning_effort_reaches_openai_compatible_providers(self) -> None:
+        provider = build_llm_provider(
+            make_settings(llm_provider="gemini", llm_reasoning_effort="none")
+        )
+
+        assert isinstance(provider, GeminiProvider)
+        assert provider.reasoning_effort == "none"
+
+
+class TestReasoningEffort:
+    def _provider(self, reasoning_effort: str | None, captured: dict[str, Any]) -> OpenAIProvider:
+        def fake_create(**kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return SimpleNamespace(
+                model="gemini-2.5-flash",
+                choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+                usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+            )
+
+        return OpenAIProvider(
+            model="gemini-2.5-flash",
+            reasoning_effort=reasoning_effort,
+            client=SimpleNamespace(  # type: ignore[arg-type]
+                chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
+            ),
+        )
+
+    def test_configured_effort_is_sent_with_every_call(self) -> None:
+        captured: dict[str, Any] = {}
+
+        self._provider("none", captured).complete("Extract.")
+
+        assert captured["extra_body"] == {"reasoning_effort": "none"}
+
+    def test_unset_effort_sends_nothing(self) -> None:
+        captured: dict[str, Any] = {}
+
+        self._provider(None, captured).complete("Extract.")
+
+        assert captured.get("extra_body") is None
+
 
 class TestEmbeddingProviderSelection:
     def test_default_configuration_builds_openai_embeddings(self) -> None:

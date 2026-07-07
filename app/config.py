@@ -13,6 +13,11 @@ class Settings(BaseSettings):
 
     llm_provider: str = "anthropic"
     llm_model: str | None = None  # None -> the selected provider's default model
+    # Reasoning/thinking control for OpenAI-compatible providers ("none", "low",
+    # "medium", "high"). "none" disables Gemini 2.5 Flash thinking so structured
+    # stages don't spend the completion budget deliberating; gemini-2.5-pro
+    # rejects "none". Ignored by the anthropic and fake providers.
+    llm_reasoning_effort: str | None = None
     embedding_provider: str = "openai"  # Anthropic has no embeddings API
     embedding_model: str | None = None
     # API keys; when unset the providers fall back to the conventional

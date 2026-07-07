@@ -149,12 +149,40 @@ class TestKnowledgeExtractionStage:
         prime_extraction(stub_llm)
         ingest(client, session_factory, settings, book_id)
 
-        stub_llm.queue(EXTRACTION_SYSTEM_PROMPT, "this is not JSON")
+        # A chapter's call is retried once, so persistent failure needs two
+        # bad responses for the same chapter.
+        stub_llm.queue(EXTRACTION_SYSTEM_PROMPT, "this is not JSON", "still not JSON")
         job = ingest(client, session_factory, settings, book_id)
 
         assert job["status"] == "failed"
         assert "extraction" in str(job["error"])
         assert len(client.get(f"/books/{book_id}/knowledge-objects").json()) == 3
+
+    def test_transient_invalid_response_is_retried_and_run_succeeds(
+        self,
+        client: TestClient,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        stub_llm: StubLLMProvider,
+    ) -> None:
+        book_id = register_book_with_hints(client)
+        # Chapter 1 answers garbage once, then valid objects on the retry;
+        # chapter 2 answers valid objects directly.
+        stub_llm.queue(
+            EXTRACTION_SYSTEM_PROMPT,
+            "this is not JSON",
+            json.dumps(CHAPTER_ONE_OBJECTS),
+            json.dumps(CHAPTER_TWO_OBJECTS),
+        )
+
+        job = ingest(client, session_factory, settings, book_id)
+
+        assert job["status"] == "succeeded"
+        assert len(client.get(f"/books/{book_id}/knowledge-objects").json()) == 3
+        log = (Path(settings.storage_root) / "logs" / f"{job['id']}.log").read_text(
+            encoding="utf-8"
+        )
+        assert "retrying" in log
 
     def test_book_without_detected_chapters_extracts_nothing_but_succeeds(
         self,

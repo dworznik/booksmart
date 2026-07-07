@@ -159,6 +159,38 @@ class TestEmbeddingStage:
         assert "Body text explaining the idea" in summary_calls[0]
         assert "Chapter One: Modules" not in summary_calls[1]
 
+    def test_transient_invalid_summary_response_is_retried(
+        self,
+        client: TestClient,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        stub_llm: StubLLMProvider,
+    ) -> None:
+        book_id = register_book_with_hints(client)
+        prime_extraction(stub_llm)
+        # Chapter 1 answers garbage once, then its real summary on the retry.
+        stub_llm.queue(
+            SUMMARY_SYSTEM_PROMPT,
+            "not a summary payload",
+            *(json.dumps(payload) for payload in CHAPTER_SUMMARIES),
+        )
+
+        job = ingest(client, session_factory, settings, book_id)
+
+        assert job["status"] == "succeeded"
+        with session_factory() as session:
+            chapters = list(
+                session.scalars(
+                    select(Chapter)
+                    .where(Chapter.book_id == uuid.UUID(book_id))
+                    .order_by(Chapter.position)
+                )
+            )
+            assert [c.summary for c in chapters] == [
+                "Modules should be deep.",
+                "Symptoms of complexity.",
+            ]
+
     def test_records_without_summaries_are_not_embedded(
         self,
         client: TestClient,
