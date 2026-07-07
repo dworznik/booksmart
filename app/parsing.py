@@ -17,6 +17,11 @@ from typing import Any, Protocol
 import pymupdf
 import pymupdf4llm
 
+# Version of the text-extraction pipeline (parser chain + structure handling),
+# stamped on every ingestion job as extraction_version. Bump when parsing
+# behavior changes so reprocessed runs are distinguishable in history.
+EXTRACTION_VERSION = "1"
+
 
 class ParserUnavailable(Exception):
     """The parser's backing tool/library is not installed on this machine."""

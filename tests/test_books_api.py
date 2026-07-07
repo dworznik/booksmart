@@ -273,6 +273,47 @@ class TestUpdateBook:
         assert response.status_code == 422
 
 
+class TestDuplicateUpload:
+    def test_duplicate_content_returns_409_with_existing_book_id(
+        self, client: TestClient
+    ) -> None:
+        original = upload_book(client).json()
+
+        response = upload_book(client, filename="same-bytes.pdf", title="Different Title")
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["existing_book_id"] == original["id"]
+
+    def test_rejected_duplicate_creates_no_row_and_no_file(
+        self, client: TestClient, settings: Settings
+    ) -> None:
+        original = upload_book(client).json()
+
+        upload_book(client)
+
+        books = client.get("/books").json()
+        assert [book["id"] for book in books] == [original["id"]]
+        book_dirs = list((Path(settings.storage_root) / "books").iterdir())
+        assert [d.name for d in book_dirs] == [original["id"]]
+
+    def test_original_book_unchanged_after_rejected_duplicate(
+        self, client: TestClient
+    ) -> None:
+        original = upload_book(client).json()
+
+        upload_book(client, title="Sneaky Overwrite", author="Somebody Else")
+
+        assert client.get(f"/books/{original['id']}").json() == original
+
+    def test_same_metadata_different_content_accepted(self, client: TestClient) -> None:
+        first = upload_book(client)
+        second = upload_book(client, content=PDF_BYTES + b"% different trailing bytes\n")
+
+        assert first.status_code == 201
+        assert second.status_code == 201
+        assert first.json()["id"] != second.json()["id"]
+
+
 class TestListAndFetchBooks:
     def test_empty_list(self, client: TestClient) -> None:
         response = client.get("/books")
@@ -282,7 +323,12 @@ class TestListAndFetchBooks:
 
     def test_uploaded_books_appear_in_list(self, client: TestClient) -> None:
         first = upload_book(client).json()
-        second = upload_book(client, title="The Pragmatic Programmer", author="Hunt & Thomas").json()
+        second = upload_book(
+            client,
+            title="The Pragmatic Programmer",
+            author="Hunt & Thomas",
+            content=PDF_BYTES + b"% pragprog\n",
+        ).json()
 
         listed = client.get("/books").json()
         assert {book["id"] for book in listed} == {first["id"], second["id"]}

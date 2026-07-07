@@ -17,7 +17,14 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from app.config import Settings
 
-MAX_COMPLETION_TOKENS = 16000
+# Generous ceiling: only generated tokens are billed. Thinking models spend
+# from this same budget, so it is sized for reasoning plus a full JSON answer.
+MAX_COMPLETION_TOKENS = 32000
+
+# Both SDKs retry rate limits and transient errors with exponential backoff,
+# honoring Retry-After; the default of 2 attempts gives up too easily for a
+# long unattended ingestion run.
+CLIENT_MAX_RETRIES = 4
 
 # Gemini is served through Google's OpenAI-compatible endpoint, so the OpenAI
 # SDK covers both and Gemini needs no dependency of its own.
@@ -31,6 +38,25 @@ DEFAULT_MODELS = {
     "fake": "fake-llm-1",
 }
 
+# Anthropic offers no embeddings API, so the embedding provider is configured
+# separately (BOOKSMART_EMBEDDING_PROVIDER / BOOKSMART_EMBEDDING_MODEL).
+DEFAULT_EMBEDDING_MODELS = {
+    "openai": "text-embedding-3-small",
+    "gemini": "gemini-embedding-001",
+    # Deterministic fixed-size vectors, no keys or network (CI, local dev).
+    "fake": "fake-embed-1",
+}
+
+
+def strip_fences(text: str) -> str:
+    """Models occasionally wrap JSON in ``` fences despite instructions."""
+    if not text.startswith("```"):
+        return text
+    lines = text.splitlines()[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines)
+
 
 class LLMError(RuntimeError):
     """The provider returned no usable completion (refusal, empty response)."""
@@ -40,6 +66,10 @@ class LLMError(RuntimeError):
 class LLMResponse:
     text: str
     model: str
+    # Billable token counts as reported by the provider; None when the
+    # provider did not report usage.
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 class LLMProvider(Protocol):
@@ -56,7 +86,9 @@ class AnthropicProvider:
         client: anthropic.Anthropic | None = None,
     ) -> None:
         self.model = model
-        self._client = client or anthropic.Anthropic(api_key=api_key)
+        self._client = client or anthropic.Anthropic(
+            api_key=api_key, max_retries=CLIENT_MAX_RETRIES
+        )
 
     def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
         response = self._client.messages.create(
@@ -68,10 +100,86 @@ class AnthropicProvider:
         if response.stop_reason == "refusal":
             raise LLMError(f"{self.model} refused the request")
         text = "".join(block.text for block in response.content if block.type == "text")
-        return LLMResponse(text=text, model=response.model)
+        return LLMResponse(
+            text=text,
+            model=response.model,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+        )
 
 
 class OpenAIProvider:
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        client: openai.OpenAI | None = None,
+        reasoning_effort: str | None = None,
+    ) -> None:
+        self.model = model
+        self.reasoning_effort = reasoning_effort
+        self._client = client or openai.OpenAI(
+            api_key=api_key, base_url=base_url, max_retries=CLIENT_MAX_RETRIES
+        )
+
+    def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
+        messages: list[ChatCompletionMessageParam] = []
+        if system is not None:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        # Via extra_body because Gemini's compat layer accepts "none", which
+        # the OpenAI SDK's reasoning_effort type does not.
+        extra_body = (
+            {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort else None
+        )
+        response = self._client.chat.completions.create(
+            model=self.model,
+            max_completion_tokens=MAX_COMPLETION_TOKENS,
+            messages=messages,
+            extra_body=extra_body,
+        )
+        if not response.choices or response.choices[0].message.content is None:
+            raise LLMError(f"{self.model} returned an empty completion")
+        usage = response.usage
+        return LLMResponse(
+            text=response.choices[0].message.content,
+            model=response.model,
+            input_tokens=usage.prompt_tokens if usage else None,
+            output_tokens=usage.completion_tokens if usage else None,
+        )
+
+
+def _resolve_gemini_key(api_key: str | None) -> str | None:
+    # The OpenAI SDK only knows OPENAI_API_KEY, so resolve Gemini's own
+    # conventional variable here instead of leaving it to the SDK.
+    return api_key or os.environ.get("GEMINI_API_KEY")
+
+
+class GeminiProvider(OpenAIProvider):
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        client: openai.OpenAI | None = None,
+        reasoning_effort: str | None = None,
+    ) -> None:
+        super().__init__(
+            model,
+            api_key=_resolve_gemini_key(api_key),
+            base_url=GEMINI_BASE_URL,
+            client=client,
+            reasoning_effort=reasoning_effort,
+        )
+
+
+class EmbeddingProvider(Protocol):
+    model: str
+
+    def embed(self, texts: list[str]) -> list[list[float]]: ...
+
+
+class OpenAIEmbeddingProvider:
     def __init__(
         self,
         model: str,
@@ -82,36 +190,41 @@ class OpenAIProvider:
         self.model = model
         self._client = client or openai.OpenAI(api_key=api_key, base_url=base_url)
 
-    def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
-        messages: list[ChatCompletionMessageParam] = []
-        if system is not None:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-        response = self._client.chat.completions.create(
-            model=self.model,
-            max_completion_tokens=MAX_COMPLETION_TOKENS,
-            messages=messages,
-        )
-        if not response.choices or response.choices[0].message.content is None:
-            raise LLMError(f"{self.model} returned an empty completion")
-        return LLMResponse(text=response.choices[0].message.content, model=response.model)
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        response = self._client.embeddings.create(model=self.model, input=texts)
+        return [item.embedding for item in sorted(response.data, key=lambda item: item.index)]
 
 
-class GeminiProvider(OpenAIProvider):
+class GeminiEmbeddingProvider(OpenAIEmbeddingProvider):
     def __init__(
         self,
         model: str,
         api_key: str | None = None,
         client: openai.OpenAI | None = None,
     ) -> None:
-        # The OpenAI SDK only knows OPENAI_API_KEY, so resolve Gemini's own
-        # conventional variable here instead of leaving it to the SDK.
         super().__init__(
             model,
-            api_key=api_key or os.environ.get("GEMINI_API_KEY"),
+            api_key=_resolve_gemini_key(api_key),
             base_url=GEMINI_BASE_URL,
             client=client,
         )
+
+
+def build_embedding_provider(settings: Settings) -> EmbeddingProvider:
+    if settings.embedding_provider not in DEFAULT_EMBEDDING_MODELS:
+        raise ValueError(
+            f"Unknown embedding provider {settings.embedding_provider!r}; "
+            f"expected one of {sorted(DEFAULT_EMBEDDING_MODELS)}"
+        )
+    model = settings.embedding_model or DEFAULT_EMBEDDING_MODELS[settings.embedding_provider]
+    if settings.embedding_provider == "fake":
+        # Lazy for the same import-cycle reason as in build_llm_provider.
+        from app.fakes import FakeEmbeddingProvider
+
+        return FakeEmbeddingProvider(model=model)
+    if settings.embedding_provider == "gemini":
+        return GeminiEmbeddingProvider(model=model, api_key=settings.gemini_api_key)
+    return OpenAIEmbeddingProvider(model=model, api_key=settings.openai_api_key)
 
 
 def build_llm_provider(settings: Settings) -> LLMProvider:
@@ -130,5 +243,13 @@ def build_llm_provider(settings: Settings) -> LLMProvider:
     if settings.llm_provider == "anthropic":
         return AnthropicProvider(model=model, api_key=settings.anthropic_api_key)
     if settings.llm_provider == "gemini":
-        return GeminiProvider(model=model, api_key=settings.gemini_api_key)
-    return OpenAIProvider(model=model, api_key=settings.openai_api_key)
+        return GeminiProvider(
+            model=model,
+            api_key=settings.gemini_api_key,
+            reasoning_effort=settings.llm_reasoning_effort,
+        )
+    return OpenAIProvider(
+        model=model,
+        api_key=settings.openai_api_key,
+        reasoning_effort=settings.llm_reasoning_effort,
+    )

@@ -47,7 +47,16 @@ class Chapter(Base):
     book_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("books.id", ondelete="CASCADE"))
     position: Mapped[int]
     title: Mapped[str]
+    # "front_matter" | "chapter" | "back_matter"; lets downstream stages skip
+    # or weight peripheral matter while provenance can still point into it.
+    kind: Mapped[str] = mapped_column(default="chapter", server_default="chapter")
     source_line: Mapped[int | None]
+    summary: Mapped[str | None] = mapped_column(Text)
+    summary_model: Mapped[str | None]
+    summary_prompt_version: Mapped[str | None]
+    embedding_id: Mapped[uuid.UUID | None]
+    embedding_model: Mapped[str | None]
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     sections: Mapped[list["Section"]] = relationship(
         back_populates="chapter",
@@ -66,6 +75,12 @@ class Section(Base):
     position: Mapped[int]
     title: Mapped[str]
     source_line: Mapped[int | None]
+    summary: Mapped[str | None] = mapped_column(Text)
+    summary_model: Mapped[str | None]
+    summary_prompt_version: Mapped[str | None]
+    embedding_id: Mapped[uuid.UUID | None]
+    embedding_model: Mapped[str | None]
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     chapter: Mapped[Chapter] = relationship(back_populates="sections")
 
@@ -115,6 +130,9 @@ class KnowledgeObject(Base):
     paragraph: Mapped[int | None]
     extraction_model: Mapped[str]
     extraction_prompt_version: Mapped[str]
+    embedding_id: Mapped[uuid.UUID | None]
+    embedding_model: Mapped[str | None]
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -127,10 +145,20 @@ class IngestionJob(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     book_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("books.id"))
+    # Which stages this run covers: "full" | "profile" | "extraction" | "embeddings".
+    scope: Mapped[str] = mapped_column(default="full", server_default="full")
     status: Mapped[str] = mapped_column(default="queued")
     error: Mapped[str | None] = mapped_column(Text)
     output_path: Mapped[str | None]
     parser_used: Mapped[str | None]
+    # Stamped when the run executes, so history records exactly what produced it.
+    extraction_version: Mapped[str | None]
+    model_version: Mapped[str | None]
+    prompt_version: Mapped[str | None]
+    # Summed provider-reported LLM usage across the run's calls; NULL when the
+    # scope made no LLM calls.
+    input_tokens: Mapped[int | None]
+    output_tokens: Mapped[int | None]
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

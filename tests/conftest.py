@@ -12,6 +12,7 @@ import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
 from fastapi.testclient import TestClient
+from qdrant_client import QdrantClient
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -19,6 +20,8 @@ from app.config import Settings
 from app.extraction import EXTRACTION_SYSTEM_PROMPT
 from app.llm import LLMResponse
 from app.main import create_app
+from app.summaries import SUMMARY_SYSTEM_PROMPT
+from app.vectors import VectorStore
 
 TEST_DATABASE_URL = os.environ.get(
     "BOOKSMART_TEST_DATABASE_URL",
@@ -88,7 +91,12 @@ class StubLLMProvider:
     unrelated tests ingesting cleanly), and otherwise to `text`.
     """
 
-    defaults: dict[str, str] = {EXTRACTION_SYSTEM_PROMPT: "[]"}
+    defaults: dict[str, str] = {
+        EXTRACTION_SYSTEM_PROMPT: "[]",
+        SUMMARY_SYSTEM_PROMPT: (
+            '{"chapter_summary": "A stubbed chapter summary.", "section_summaries": []}'
+        ),
+    }
 
     def __init__(self, text: str = "A stubbed book profile.", model: str = "stub-llm-1") -> None:
         self.text = text
@@ -99,14 +107,25 @@ class StubLLMProvider:
     def queue(self, system: str, *responses: str) -> None:
         self.queues.setdefault(system, []).extend(responses)
 
+    # Fixed per-call usage so tests can assert exact accumulated totals.
+    INPUT_TOKENS_PER_CALL = 100
+    OUTPUT_TOKENS_PER_CALL = 10
+
     def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
         self.calls.append((prompt, system))
         queued = self.queues.get(system or "")
         if queued:
-            return LLMResponse(text=queued.pop(0), model=self.model)
-        if system in self.defaults:
-            return LLMResponse(text=self.defaults[system], model=self.model)
-        return LLMResponse(text=self.text, model=self.model)
+            text = queued.pop(0)
+        elif system in self.defaults:
+            text = self.defaults[system]
+        else:
+            text = self.text
+        return LLMResponse(
+            text=text,
+            model=self.model,
+            input_tokens=self.INPUT_TOKENS_PER_CALL,
+            output_tokens=self.OUTPUT_TOKENS_PER_CALL,
+        )
 
 
 @pytest.fixture()
@@ -114,11 +133,43 @@ def stub_llm() -> StubLLMProvider:
     return StubLLMProvider()
 
 
-@pytest.fixture(autouse=True)
-def _never_call_real_llm(monkeypatch: pytest.MonkeyPatch, stub_llm: StubLLMProvider) -> None:
-    """The worker builds a real provider when none is injected; tests never do that.
+class StubEmbeddingProvider:
+    """Deterministic tiny vectors; records every batch of texts it embeds."""
 
-    The same instance as the `stub_llm` fixture is installed, so tests can
-    inspect the prompts the worker sent without passing the stub explicitly.
+    model = "stub-embed-1"
+
+    def __init__(self) -> None:
+        self.batches: list[list[str]] = []
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self.batches.append(list(texts))
+        return [[float(len(text) % 5 + 1), 1.0, 0.5] for text in texts]
+
+
+@pytest.fixture()
+def stub_embedder() -> StubEmbeddingProvider:
+    return StubEmbeddingProvider()
+
+
+@pytest.fixture()
+def vector_store() -> VectorStore:
+    """A fresh in-memory Qdrant per test."""
+    return VectorStore(QdrantClient(":memory:"))
+
+
+@pytest.fixture(autouse=True)
+def _never_call_real_llm(
+    monkeypatch: pytest.MonkeyPatch,
+    stub_llm: StubLLMProvider,
+    stub_embedder: StubEmbeddingProvider,
+    vector_store: VectorStore,
+) -> None:
+    """The worker builds real providers when none are injected; tests never do that.
+
+    The same instances as the `stub_llm` / `stub_embedder` / `vector_store`
+    fixtures are installed, so tests can inspect prompts, embedded texts, and
+    stored vectors without passing the stubs explicitly.
     """
     monkeypatch.setattr("app.worker.build_default_llm", lambda: stub_llm)
+    monkeypatch.setattr("app.worker.build_default_embedder", lambda: stub_embedder)
+    monkeypatch.setattr("app.worker.build_default_vector_store", lambda: vector_store)
