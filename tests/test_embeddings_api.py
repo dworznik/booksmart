@@ -11,9 +11,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
 from app.models import Chapter, KnowledgeObject, Section
+from app.runner import execute_run
 from app.summaries import SUMMARY_SYSTEM_PROMPT
 from app.vectors import COLLECTION_NAME, VectorStore
-from app.worker import process_one_job
 
 from .conftest import StubEmbeddingProvider, StubLLMProvider
 from .test_ingestion_api import register_book
@@ -248,14 +248,16 @@ class TestEmbeddingStage:
         book_id = register_book_with_hints(client)
         prime_extraction(stub_llm)
         prime_summaries(stub_llm)
-        job_id = client.post(f"/books/{book_id}/ingest").json()["id"]
 
-        assert (
-            process_one_job(session_factory, settings.storage_root, embedder=ExplodingEmbedder())
-            is True
+        run_id = execute_run(
+            session_factory,
+            settings.storage_root,
+            uuid.UUID(book_id),
+            "full",
+            embedder=ExplodingEmbedder(),
         )
 
-        job = client.get(f"/jobs/{job_id}").json()
+        job = client.get(f"/jobs/{run_id}").json()
         assert job["status"] == "failed"
         assert "embedding" in str(job["error"])
 
@@ -295,13 +297,16 @@ class TestEmbeddingStage:
         prime_summaries(stub_llm)
         other_embedder = StubEmbeddingProvider()
         other_embedder.model = "stub-embed-2"
-        job_id = client.post(f"/books/{book_id}/ingest").json()["id"]
-        assert (
-            process_one_job(session_factory, settings.storage_root, embedder=other_embedder)
-            is True
+
+        run_id = execute_run(
+            session_factory,
+            settings.storage_root,
+            uuid.UUID(book_id),
+            "full",
+            embedder=other_embedder,
         )
 
-        job = client.get(f"/jobs/{job_id}").json()
+        job = client.get(f"/jobs/{run_id}").json()
         assert job["status"] == "failed"
         assert "stub-embed-1" in job["error"]
         assert "stub-embed-2" in job["error"]

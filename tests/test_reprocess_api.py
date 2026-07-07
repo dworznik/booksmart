@@ -16,7 +16,6 @@ from app.config import Settings
 from app.models import Chapter, KnowledgeObject
 from app.profile import PROFILE_SYSTEM_PROMPT
 from app.vectors import VectorStore
-from app.worker import process_one_job
 
 from .conftest import StubLLMProvider
 from .test_embeddings_api import count_book_points, prime_summaries
@@ -34,10 +33,8 @@ def reprocess(
     scope: str,
 ) -> dict[str, object]:
     response = client.post(f"/books/{book_id}/reprocess", json={"scope": scope})
-    assert response.status_code == 202, response.text
-    job_id = response.json()["id"]
-    assert process_one_job(session_factory, settings.storage_root) is True
-    job: dict[str, object] = client.get(f"/jobs/{job_id}").json()
+    assert response.status_code == 200, response.text
+    job: dict[str, object] = response.json()
     return job
 
 
@@ -82,7 +79,7 @@ def chapter_rows(
 
 
 class TestReprocessEndpoint:
-    def test_reprocess_returns_202_with_queued_scoped_job(
+    def test_reprocess_runs_scoped_run_synchronously(
         self,
         client: TestClient,
         session_factory: sessionmaker[Session],
@@ -93,11 +90,11 @@ class TestReprocessEndpoint:
 
         response = client.post(f"/books/{book_id}/reprocess", json={"scope": "profile"})
 
-        assert response.status_code == 202
+        assert response.status_code == 200
         job = response.json()
         assert job["book_id"] == book_id
         assert job["scope"] == "profile"
-        assert job["status"] == "queued"
+        assert job["status"] == "succeeded"
 
     def test_unknown_book_returns_404(self, client: TestClient) -> None:
         response = client.post(
@@ -128,8 +125,10 @@ class TestReprocessEndpoint:
 
         response = client.post(f"/books/{book_id}/reprocess", json={"scope": "full"})
 
-        assert response.status_code == 202
-        assert response.json()["scope"] == "full"
+        assert response.status_code == 200
+        body = response.json()
+        assert body["scope"] == "full"
+        assert body["status"] == "succeeded"
 
 
 class TestProfileScope:
@@ -168,7 +167,6 @@ class TestProfileScope:
         assert job["extraction_version"] == "1"
         assert job["model_version"] == "llm=stub-llm-1"
         assert job["prompt_version"] == "profile=1"
-        assert job["started_at"] is not None
         assert job["finished_at"] is not None
         # No parsing happened and no artifact was needed.
         assert job["parser_used"] is None
@@ -195,9 +193,10 @@ class TestExtractionScope:
         objects_after = knowledge_object_ids(session_factory, book_id)
         assert len(objects_after) == 3  # replaced, not duplicated
         assert objects_after.isdisjoint(objects_before)
-        # Upstream artifacts reused: no new parse, same parsed markdown.
+        # Upstream artifacts reused: this run did not parse, so it records no
+        # artifact of its own — extraction read the book's existing parsed_path.
         assert job["parser_used"] is None
-        assert job["output_path"] == first_job["output_path"]
+        assert job["output_path"] is None
         # Structure untouched (same chapter rows except refreshed embeddings).
         assert [row[0] for row in chapter_rows(session_factory, book_id)] == [
             row[0] for row in chapters_before
@@ -310,7 +309,9 @@ class TestFullScope:
 
         assert job["status"] == "succeeded"
         assert job["parser_used"] is not None
-        assert job["output_path"] != first_job["output_path"]
+        # One parsed artifact per book (replaced wholesale), so a full rebuild
+        # reuses the same stable path rather than minting a per-run file.
+        assert job["output_path"] == first_job["output_path"]
         outline_after = client.get(f"/books/{book_id}/structure").json()
         assert [c["title"] for c in outline_after] == [c["title"] for c in outline_before]
         # Structure was replaced, not duplicated.

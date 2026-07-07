@@ -8,6 +8,7 @@ whenever the prompt wording changes.
 
 import json
 
+from app.errors import ProviderResponseError
 from app.extraction import build_chapter_prompt
 from app.llm import strip_fences
 from app.models import Book, Chapter
@@ -24,8 +25,10 @@ SUMMARY_SYSTEM_PROMPT = (
 )
 
 
-class SummaryError(RuntimeError):
-    """The LLM response could not be turned into usable summaries."""
+class SummaryError(ProviderResponseError):
+    """The LLM response could not be turned into usable summaries. A retriable
+    ProviderResponseError: when it escapes a stage (unparseable even after the
+    stage's own retry), a fresh attempt may still succeed."""
 
 
 def parse_summary_response(text: str, section_count: int) -> tuple[str, list[str | None]]:

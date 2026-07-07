@@ -61,16 +61,21 @@ class BookStorage:
 
         return StoredFile(path=target, checksum=md5.hexdigest(), file_hash=file_hash)
 
-    def save_parsed(self, book_id: uuid.UUID, job_id: uuid.UUID, markdown: str) -> Path:
+    def save_parsed(self, book_id: uuid.UUID, markdown: str) -> Path:
+        """Write the book's current parsed markdown, replacing any earlier one.
+
+        One artifact per book (the parse stage replaces its output wholesale
+        and the pointer lives on Book.parsed_path), so the filename is stable
+        rather than per-run — a run never learns its own id."""
         parsed_dir = self._parsed_dir / str(book_id)
         parsed_dir.mkdir(parents=True, exist_ok=True)
-        target = parsed_dir / f"{job_id}.md"
+        target = parsed_dir / "parsed.md"
         target.write_text(markdown, encoding="utf-8")
         return target
 
-    def save_log(self, job_id: uuid.UUID, content: str) -> Path:
+    def save_log(self, run_id: uuid.UUID, content: str) -> Path:
         self._logs_dir.mkdir(parents=True, exist_ok=True)
-        target = self._logs_dir / f"{job_id}.log"
+        target = self._logs_dir / f"{run_id}.log"
         target.write_text(content, encoding="utf-8")
         return target
 

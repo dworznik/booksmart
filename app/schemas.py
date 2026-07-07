@@ -122,7 +122,7 @@ class ReprocessRequest(BaseModel):
     scope: ReprocessScope
 
 
-class IngestionJobOut(BaseModel):
+class RunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
     id: uuid.UUID
@@ -138,5 +138,4 @@ class IngestionJobOut(BaseModel):
     input_tokens: int | None
     output_tokens: int | None
     created_at: datetime
-    started_at: datetime | None
     finished_at: datetime | None
