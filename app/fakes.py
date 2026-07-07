@@ -9,13 +9,27 @@ the stage's parser expects.
 import json
 
 from app.extraction import EXTRACTION_SYSTEM_PROMPT
-from app.llm import LLMResponse
+from app.llm import EmbeddingLimits, LLMLimits, LLMResponse, resolve_limits
 from app.profile import PROFILE_SYSTEM_PROMPT
 from app.summaries import SUMMARY_SYSTEM_PROMPT
 
 FAKE_LLM_MODEL = "fake-llm-1"
 FAKE_EMBEDDING_MODEL = "fake-embed-1"
 FAKE_EMBEDDING_SIZE = 8
+
+# Fakes carry Limits like any real provider so pipeline code exercised against
+# them (batching, budgets) behaves exactly as it will in production.
+_FAKE_LLM_LIMITS = {
+    FAKE_LLM_MODEL: LLMLimits(max_output_tokens=32000),
+}
+_FAKE_LLM_DEFAULT = LLMLimits(max_output_tokens=32000)
+
+_FAKE_EMBEDDING_LIMITS = {
+    FAKE_EMBEDDING_MODEL: EmbeddingLimits(
+        max_batch=100, embedding_dimensions=FAKE_EMBEDDING_SIZE
+    ),
+}
+_FAKE_EMBEDDING_DEFAULT = EmbeddingLimits(max_batch=100)
 
 # One well-formed knowledge object per chapter, so the extraction stage's
 # parsing and persistence run for real.
@@ -51,6 +65,8 @@ DEFAULT_RESPONSE = "A deterministic fake response."
 class FakeLLMProvider:
     def __init__(self, model: str = FAKE_LLM_MODEL) -> None:
         self.model = model
+        limits = resolve_limits("fake", model, _FAKE_LLM_LIMITS, _FAKE_LLM_DEFAULT)
+        self.max_output_tokens = limits.max_output_tokens
 
     def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
         text = STAGE_RESPONSES.get(system or "", DEFAULT_RESPONSE)
@@ -60,6 +76,9 @@ class FakeLLMProvider:
 class FakeEmbeddingProvider:
     def __init__(self, model: str = FAKE_EMBEDDING_MODEL) -> None:
         self.model = model
+        limits = resolve_limits("fake", model, _FAKE_EMBEDDING_LIMITS, _FAKE_EMBEDDING_DEFAULT)
+        self.max_batch = limits.max_batch
+        self.embedding_dimensions = limits.embedding_dimensions
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """Fixed-size vectors derived from text length: deterministic, and
