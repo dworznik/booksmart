@@ -66,10 +66,15 @@ class TestProviderSelection:
 
     def test_reasoning_effort_reaches_openai_compatible_providers(self) -> None:
         provider = build_llm_provider(
-            make_settings(llm_provider="gemini", llm_reasoning_effort="none")
+            make_settings(
+                llm_provider="gemini",
+                llm_model="gemini-2.5-flash",  # 2.5 Pro rejects "none"
+                llm_reasoning_effort="none",
+            )
         )
 
         assert isinstance(provider, GeminiProvider)
+        assert provider.model == "gemini-2.5-flash"
         assert provider.reasoning_effort == "none"
 
 

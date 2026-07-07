@@ -5,11 +5,20 @@ BOOKSMART_LLM_MODEL), never hardcoded, so ingestion stages that need a model
 (profile generation, knowledge extraction, embeddings) all share one seam.
 API keys come from settings or fall back to the SDKs' standard environment
 variables (ANTHROPIC_API_KEY, OPENAI_API_KEY).
+
+Capability knowledge lives here too (see CONTEXT.md): a Limit is a
+provider-declared API fact resolved per (vendor, model) at construction and
+exposed as plain instance attributes; a Preference is a user choice validated
+against Limits before any call is made. Consumers ask the provider
+(`embedder.max_batch`), never a vendor. Limits change only via the tables in
+this module — an env-overridable Limit would just be a Preference with a
+scarier name.
 """
 
+import logging
 import os
 from dataclasses import dataclass
-from typing import Protocol
+from typing import ClassVar, Protocol, TypeVar
 
 import anthropic
 import openai
@@ -17,9 +26,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from app.config import Settings
 
-# Generous ceiling: only generated tokens are billed. Thinking models spend
-# from this same budget, so it is sized for reasoning plus a full JSON answer.
-MAX_COMPLETION_TOKENS = 32000
+logger = logging.getLogger(__name__)
 
 # Both SDKs retry rate limits and transient errors with exponential backoff,
 # honoring Retry-After; the default of 2 attempts gives up too easily for a
@@ -46,6 +53,116 @@ DEFAULT_EMBEDDING_MODELS = {
     # Deterministic fixed-size vectors, no keys or network (CI, local dev).
     "fake": "fake-embed-1",
 }
+
+
+class ProviderConfigError(ValueError):
+    """A Preference conflicts with a Limit (or the configuration is otherwise
+    deterministically wrong). Raised at provider construction, never mid-run;
+    retrying cannot fix it, so it maps to a non-retriable error in durable
+    execution."""
+
+
+@dataclass(frozen=True)
+class LLMLimits:
+    """Provider-declared API facts for one (vendor, model)."""
+
+    max_output_tokens: int
+    # None means unknown: reasoning-effort Preferences pass through to the API
+    # unvalidated (a logged gamble) instead of being rejected here.
+    valid_reasoning_efforts: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class EmbeddingLimits:
+    """Provider-declared API facts for one (vendor, embedding model)."""
+
+    max_batch: int
+    embedding_dimensions: int | None = None  # None means unknown
+
+
+# Per-model Limits tables plus a conservative per-vendor default, so unknown
+# (new) models stay usable day one with one log line. If we know the Limit we
+# enforce it; if we don't, we say so and defer to the API.
+
+_ANTHROPIC_LLM_LIMITS = {
+    # valid_reasoning_efforts stays None: the Anthropic provider does not take
+    # the reasoning-effort Preference, so there is nothing to validate.
+    "claude-opus-4-8": LLMLimits(max_output_tokens=32000),
+    "claude-sonnet-5": LLMLimits(max_output_tokens=64000),
+}
+_ANTHROPIC_LLM_DEFAULT = LLMLimits(max_output_tokens=32000)
+
+_OPENAI_LLM_LIMITS = {
+    "gpt-5.5": LLMLimits(
+        max_output_tokens=128000,
+        valid_reasoning_efforts=("none", "minimal", "low", "medium", "high"),
+    ),
+}
+_OPENAI_LLM_DEFAULT = LLMLimits(max_output_tokens=32000)
+
+_GEMINI_LLM_LIMITS = {
+    # 2.5 Pro rejects "none" (thinking cannot be disabled); Flash accepts it.
+    "gemini-2.5-pro": LLMLimits(
+        max_output_tokens=65536,
+        valid_reasoning_efforts=("low", "medium", "high"),
+    ),
+    "gemini-2.5-flash": LLMLimits(
+        max_output_tokens=65536,
+        valid_reasoning_efforts=("none", "low", "medium", "high"),
+    ),
+}
+_GEMINI_LLM_DEFAULT = LLMLimits(max_output_tokens=32000)
+
+_OPENAI_EMBEDDING_LIMITS = {
+    "text-embedding-3-small": EmbeddingLimits(max_batch=2048, embedding_dimensions=1536),
+    "text-embedding-3-large": EmbeddingLimits(max_batch=2048, embedding_dimensions=3072),
+}
+# 2048 inputs per request is an endpoint-wide fact, not per-model.
+_OPENAI_EMBEDDING_DEFAULT = EmbeddingLimits(max_batch=2048)
+
+_GEMINI_EMBEDDING_LIMITS = {
+    "gemini-embedding-001": EmbeddingLimits(max_batch=100, embedding_dimensions=3072),
+}
+_GEMINI_EMBEDDING_DEFAULT = EmbeddingLimits(max_batch=100)
+
+LimitsT = TypeVar("LimitsT", LLMLimits, EmbeddingLimits)
+
+
+def resolve_limits(
+    vendor: str, model: str, table: dict[str, LimitsT], default: LimitsT
+) -> LimitsT:
+    """Look up a model's Limits in its provider module's table, falling back to
+    the conservative vendor default (with one log line) for unknown models."""
+    limits = table.get(model)
+    if limits is not None:
+        return limits
+    logger.warning(
+        "unknown %s model %r: assuming conservative vendor-default limits %s",
+        vendor,
+        model,
+        default,
+    )
+    return default
+
+
+def _validate_reasoning_effort(
+    vendor: str, model: str, effort: str | None, valid: tuple[str, ...] | None
+) -> None:
+    if effort is None:
+        return
+    if valid is None:
+        logger.warning(
+            "cannot validate reasoning_effort %r for unknown %s model %r; "
+            "passing it through — the API may reject it",
+            effort,
+            vendor,
+            model,
+        )
+        return
+    if effort not in valid:
+        raise ProviderConfigError(
+            f"reasoning_effort {effort!r} is not valid for {model}; valid: {', '.join(valid)}"
+        )
 
 
 def strip_fences(text: str) -> str:
@@ -86,6 +203,8 @@ class AnthropicProvider:
         client: anthropic.Anthropic | None = None,
     ) -> None:
         self.model = model
+        limits = resolve_limits("anthropic", model, _ANTHROPIC_LLM_LIMITS, _ANTHROPIC_LLM_DEFAULT)
+        self.max_output_tokens = limits.max_output_tokens
         self._client = client or anthropic.Anthropic(
             api_key=api_key, max_retries=CLIENT_MAX_RETRIES
         )
@@ -93,7 +212,7 @@ class AnthropicProvider:
     def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
         response = self._client.messages.create(
             model=self.model,
-            max_tokens=MAX_COMPLETION_TOKENS,
+            max_tokens=self.max_output_tokens,
             system=system if system is not None else anthropic.omit,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -109,6 +228,12 @@ class AnthropicProvider:
 
 
 class OpenAIProvider:
+    # Overridden by OpenAI-compatible subclasses so limit resolution and
+    # error messages speak about the actual vendor.
+    _vendor: ClassVar[str] = "openai"
+    _llm_limits: ClassVar[dict[str, LLMLimits]] = _OPENAI_LLM_LIMITS
+    _llm_default_limits: ClassVar[LLMLimits] = _OPENAI_LLM_DEFAULT
+
     def __init__(
         self,
         model: str,
@@ -118,6 +243,12 @@ class OpenAIProvider:
         reasoning_effort: str | None = None,
     ) -> None:
         self.model = model
+        limits = resolve_limits(self._vendor, model, self._llm_limits, self._llm_default_limits)
+        self.max_output_tokens = limits.max_output_tokens
+        self.valid_reasoning_efforts = limits.valid_reasoning_efforts
+        _validate_reasoning_effort(
+            self._vendor, model, reasoning_effort, limits.valid_reasoning_efforts
+        )
         self.reasoning_effort = reasoning_effort
         self._client = client or openai.OpenAI(
             api_key=api_key, base_url=base_url, max_retries=CLIENT_MAX_RETRIES
@@ -135,7 +266,7 @@ class OpenAIProvider:
         )
         response = self._client.chat.completions.create(
             model=self.model,
-            max_completion_tokens=MAX_COMPLETION_TOKENS,
+            max_completion_tokens=self.max_output_tokens,
             messages=messages,
             extra_body=extra_body,
         )
@@ -157,6 +288,10 @@ def _resolve_gemini_key(api_key: str | None) -> str | None:
 
 
 class GeminiProvider(OpenAIProvider):
+    _vendor: ClassVar[str] = "gemini"
+    _llm_limits: ClassVar[dict[str, LLMLimits]] = _GEMINI_LLM_LIMITS
+    _llm_default_limits: ClassVar[LLMLimits] = _GEMINI_LLM_DEFAULT
+
     def __init__(
         self,
         model: str,
@@ -175,11 +310,16 @@ class GeminiProvider(OpenAIProvider):
 
 class EmbeddingProvider(Protocol):
     model: str
+    max_batch: int
 
     def embed(self, texts: list[str]) -> list[list[float]]: ...
 
 
 class OpenAIEmbeddingProvider:
+    _vendor: ClassVar[str] = "openai"
+    _embedding_limits: ClassVar[dict[str, EmbeddingLimits]] = _OPENAI_EMBEDDING_LIMITS
+    _embedding_default_limits: ClassVar[EmbeddingLimits] = _OPENAI_EMBEDDING_DEFAULT
+
     def __init__(
         self,
         model: str,
@@ -188,6 +328,11 @@ class OpenAIEmbeddingProvider:
         client: openai.OpenAI | None = None,
     ) -> None:
         self.model = model
+        limits = resolve_limits(
+            self._vendor, model, self._embedding_limits, self._embedding_default_limits
+        )
+        self.max_batch = limits.max_batch
+        self.embedding_dimensions = limits.embedding_dimensions
         self._client = client or openai.OpenAI(api_key=api_key, base_url=base_url)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
@@ -196,6 +341,10 @@ class OpenAIEmbeddingProvider:
 
 
 class GeminiEmbeddingProvider(OpenAIEmbeddingProvider):
+    _vendor: ClassVar[str] = "gemini"
+    _embedding_limits: ClassVar[dict[str, EmbeddingLimits]] = _GEMINI_EMBEDDING_LIMITS
+    _embedding_default_limits: ClassVar[EmbeddingLimits] = _GEMINI_EMBEDDING_DEFAULT
+
     def __init__(
         self,
         model: str,
@@ -212,7 +361,7 @@ class GeminiEmbeddingProvider(OpenAIEmbeddingProvider):
 
 def build_embedding_provider(settings: Settings) -> EmbeddingProvider:
     if settings.embedding_provider not in DEFAULT_EMBEDDING_MODELS:
-        raise ValueError(
+        raise ProviderConfigError(
             f"Unknown embedding provider {settings.embedding_provider!r}; "
             f"expected one of {sorted(DEFAULT_EMBEDDING_MODELS)}"
         )
@@ -229,7 +378,7 @@ def build_embedding_provider(settings: Settings) -> EmbeddingProvider:
 
 def build_llm_provider(settings: Settings) -> LLMProvider:
     if settings.llm_provider not in DEFAULT_MODELS:
-        raise ValueError(
+        raise ProviderConfigError(
             f"Unknown LLM provider {settings.llm_provider!r}; "
             f"expected one of {sorted(DEFAULT_MODELS)}"
         )

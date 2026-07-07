@@ -50,6 +50,7 @@ def count_book_points(store: VectorStore, book_id: str) -> int:
 
 class ExplodingEmbedder:
     model = "exploding-embed"
+    max_batch = 100
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         raise RuntimeError("embedding service down")
@@ -257,6 +258,53 @@ class TestEmbeddingStage:
         job = client.get(f"/jobs/{job_id}").json()
         assert job["status"] == "failed"
         assert "embedding" in str(job["error"])
+
+    def test_embedding_batches_respect_the_providers_max_batch_limit(
+        self,
+        client: TestClient,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        stub_llm: StubLLMProvider,
+        stub_embedder: StubEmbeddingProvider,
+    ) -> None:
+        book_id = register_book_with_hints(client)
+        prime_extraction(stub_llm)
+        prime_summaries(stub_llm)
+        stub_embedder.max_batch = 3
+
+        job = ingest(client, session_factory, settings, book_id)
+
+        assert job["status"] == "succeeded"
+        # 8 embeddable records split into provider-limit-sized batches.
+        assert [len(batch) for batch in stub_embedder.batches] == [3, 3, 2]
+
+    def test_reingest_with_a_different_embedding_model_fails_actionably(
+        self,
+        client: TestClient,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        stub_llm: StubLLMProvider,
+    ) -> None:
+        # ADR 0001: the collection is locked to the model that created it.
+        book_id = register_book_with_hints(client)
+        prime_extraction(stub_llm)
+        prime_summaries(stub_llm)
+        ingest(client, session_factory, settings, book_id)
+
+        prime_extraction(stub_llm)
+        prime_summaries(stub_llm)
+        other_embedder = StubEmbeddingProvider()
+        other_embedder.model = "stub-embed-2"
+        job_id = client.post(f"/books/{book_id}/ingest").json()["id"]
+        assert (
+            process_one_job(session_factory, settings.storage_root, embedder=other_embedder)
+            is True
+        )
+
+        job = client.get(f"/jobs/{job_id}").json()
+        assert job["status"] == "failed"
+        assert "stub-embed-1" in job["error"]
+        assert "stub-embed-2" in job["error"]
 
     def test_embedded_texts_include_knowledge_object_content(
         self,

@@ -139,6 +139,7 @@ class StubEmbeddingProvider:
     model = "stub-embed-1"
 
     def __init__(self) -> None:
+        self.max_batch = 100  # a Limit in the real providers; overridable per test
         self.batches: list[list[str]] = []
 
     def embed(self, texts: list[str]) -> list[list[float]]:

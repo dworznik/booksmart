@@ -72,10 +72,6 @@ def build_default_vector_store() -> VectorStore:
     return VectorStore(QdrantClient(url=Settings().qdrant_url))
 
 
-# The tightest provider limit wins: Gemini rejects batches over 100 inputs,
-# OpenAI caps at 2048. Staying at 100 also keeps token limits far away.
-EMBED_BATCH_SIZE = 100
-
 RecordType = Literal["chapter", "section", "knowledge_object"]
 
 Stage = Literal["parse", "structure", "profile", "extraction", "summaries", "embeddings"]
@@ -405,14 +401,15 @@ def _generate_embeddings(
             )
 
         if not items:
-            vector_store.replace_book_points(str(book.id), [])
+            vector_store.replace_book_points(str(book.id), [], embedder.model)
             log("embeddings: nothing to embed")
             return
 
         texts = [text for _, _, text in items]
         embedded_vectors: list[list[float]] = []
-        for start in range(0, len(texts), EMBED_BATCH_SIZE):
-            embedded_vectors.extend(embedder.embed(texts[start : start + EMBED_BATCH_SIZE]))
+        # Batch size is the provider's Limit for its model, never a worker guess.
+        for start in range(0, len(texts), embedder.max_batch):
+            embedded_vectors.extend(embedder.embed(texts[start : start + embedder.max_batch]))
         embedded_at = datetime.now(UTC)
         records: list[VectorRecord] = []
         for (row, record_type, text), vector in zip(items, embedded_vectors, strict=True):
@@ -432,7 +429,7 @@ def _generate_embeddings(
                     },
                 )
             )
-        vector_store.replace_book_points(str(book.id), records)
+        vector_store.replace_book_points(str(book.id), records, embedder.model)
         log(f"embeddings: {len(records)} vectors stored ({embedder.model})")
     except Exception as exc:
         log(f"embeddings: failed — {type(exc).__name__}: {exc}")
