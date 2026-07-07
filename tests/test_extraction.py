@@ -30,8 +30,9 @@ def as_json(items: list[dict[str, object]]) -> str:
 
 class TestParseExtractionResponse:
     def test_parses_plain_json_array(self) -> None:
-        objects = parse_extraction_response(as_json([VALID_ITEM]))
+        objects, dropped = parse_extraction_response(as_json([VALID_ITEM]))
 
+        assert dropped == []
         assert len(objects) == 1
         extracted = objects[0]
         assert extracted.type == "Principle"
@@ -44,18 +45,47 @@ class TestParseExtractionResponse:
     def test_strips_markdown_code_fences(self) -> None:
         fenced = "```json\n" + as_json([VALID_ITEM]) + "\n```"
 
-        assert len(parse_extraction_response(fenced)) == 1
+        objects, dropped = parse_extraction_response(fenced)
+
+        assert len(objects) == 1
+        assert dropped == []
 
     def test_all_nine_types_are_accepted(self) -> None:
         items = [dict(VALID_ITEM, type=t) for t in sorted(KNOWLEDGE_OBJECT_TYPES)]
 
-        objects = parse_extraction_response(as_json(items))
+        objects, dropped = parse_extraction_response(as_json(items))
 
         assert {o.type for o in objects} == KNOWLEDGE_OBJECT_TYPES
+        assert dropped == []
 
-    def test_unknown_type_is_rejected(self) -> None:
-        with pytest.raises(ExtractionError, match="Vibe"):
-            parse_extraction_response(as_json([dict(VALID_ITEM, type="Vibe")]))
+    def test_unknown_type_drops_element_and_keeps_the_rest(self) -> None:
+        # Models sometimes reach for the book's own vocabulary ("Red Flag");
+        # one mislabeled element must not cost the whole response.
+        items = [VALID_ITEM, dict(VALID_ITEM, type="Red Flag")]
+
+        objects, dropped = parse_extraction_response(as_json(items))
+
+        assert len(objects) == 1
+        assert objects[0].type == "Principle"
+        assert len(dropped) == 1
+        assert "Red Flag" in dropped[0]
+
+    def test_missing_required_field_drops_element_with_reason(self) -> None:
+        item = dict(VALID_ITEM)
+        del item["summary"]
+
+        objects, dropped = parse_extraction_response(as_json([item, VALID_ITEM]))
+
+        assert len(objects) == 1
+        assert len(dropped) == 1
+        assert "summary" in dropped[0]
+
+    def test_non_object_element_drops_with_reason(self) -> None:
+        objects, dropped = parse_extraction_response(as_json([VALID_ITEM, "just a string"]))  # type: ignore[list-item]
+
+        assert len(objects) == 1
+        assert len(dropped) == 1
+        assert "element 1" in dropped[0]
 
     def test_non_list_payload_is_rejected(self) -> None:
         with pytest.raises(ExtractionError, match="array"):
@@ -65,17 +95,11 @@ class TestParseExtractionResponse:
         with pytest.raises(ExtractionError):
             parse_extraction_response("the model rambled instead of emitting JSON")
 
-    def test_missing_required_field_is_rejected(self) -> None:
-        item = dict(VALID_ITEM)
-        del item["summary"]
-
-        with pytest.raises(ExtractionError, match="summary"):
-            parse_extraction_response(as_json([item]))
-
     def test_optional_fields_default_to_none(self) -> None:
         item = {k: v for k, v in VALID_ITEM.items() if k in REQUIRED_FIELDS}
 
-        extracted = parse_extraction_response(as_json([item]))[0]
+        objects, _ = parse_extraction_response(as_json([item]))
+        extracted = objects[0]
 
         assert extracted.section_index is None
         assert extracted.page is None

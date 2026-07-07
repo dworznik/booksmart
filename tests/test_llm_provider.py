@@ -188,9 +188,10 @@ class TestFakeProvider:
 
         response = provider.complete("chapter text", system=EXTRACTION_SYSTEM_PROMPT)
 
-        objects = parse_extraction_response(response.text)
+        objects, dropped = parse_extraction_response(response.text)
         assert len(objects) == 1
         assert objects[0].type == "Principle"
+        assert dropped == []
 
     def test_fake_provider_answers_profile_stage_deterministically(self) -> None:
         provider = build_llm_provider(Settings(llm_provider="fake"))

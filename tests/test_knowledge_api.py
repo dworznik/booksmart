@@ -86,7 +86,7 @@ class TestKnowledgeExtractionStage:
         assert principle["page"] == 4
         assert principle["paragraph"] == 2
         assert principle["extraction_model"] == "stub-llm-1"
-        assert principle["extraction_prompt_version"] == "1"
+        assert principle["extraction_prompt_version"] == "2"
         assert principle["created_at"]
         assert "Chapter One: Modules" in principle["source_location"]
         assert "Deep Modules" in principle["source_location"]
@@ -157,6 +157,32 @@ class TestKnowledgeExtractionStage:
         assert job["status"] == "failed"
         assert "extraction" in str(job["error"])
         assert len(client.get(f"/books/{book_id}/knowledge-objects").json()) == 3
+
+    def test_element_with_unsupported_type_is_dropped_not_fatal(
+        self,
+        client: TestClient,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        stub_llm: StubLLMProvider,
+    ) -> None:
+        book_id = register_book_with_hints(client)
+        # Chapter 1: one valid object plus one in the book's own vocabulary.
+        red_flag = dict(CHAPTER_ONE_OBJECTS[0], type="Red Flag", title="Shallow Module")
+        stub_llm.queue(
+            EXTRACTION_SYSTEM_PROMPT,
+            json.dumps([CHAPTER_ONE_OBJECTS[0], red_flag]),
+            json.dumps(CHAPTER_TWO_OBJECTS),
+        )
+
+        job = ingest(client, session_factory, settings, book_id)
+
+        assert job["status"] == "succeeded"
+        objects = client.get(f"/books/{book_id}/knowledge-objects").json()
+        assert "Red Flag" not in {o["type"] for o in objects}
+        log = (Path(settings.storage_root) / "logs" / f"{job['id']}.log").read_text(
+            encoding="utf-8"
+        )
+        assert "Red Flag" in log and "dropped" in log
 
     def test_transient_invalid_response_is_retried_and_run_succeeds(
         self,

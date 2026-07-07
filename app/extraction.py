@@ -1,9 +1,10 @@
 """Knowledge object extraction from parsed chapter text.
 
-The LLM must return a strict JSON array; anything else raises ExtractionError
-and fails the run rather than persisting objects with broken provenance.
-Bump EXTRACTION_PROMPT_VERSION whenever the prompt wording changes so stored
-objects record exactly what produced them.
+The LLM must return a strict JSON array; an unusable response raises
+ExtractionError rather than persisting objects with broken provenance, while
+a single invalid element is dropped with a reason so one mislabeled object
+does not cost a whole run. Bump EXTRACTION_PROMPT_VERSION whenever the prompt
+wording changes so stored objects record exactly what produced them.
 """
 
 import json
@@ -14,7 +15,7 @@ from typing import Literal, get_args
 from app.llm import strip_fences
 from app.models import Book, Chapter, Section
 
-EXTRACTION_PROMPT_VERSION = "1"
+EXTRACTION_PROMPT_VERSION = "2"
 
 KnowledgeType = Literal[
     "Practice",
@@ -42,7 +43,10 @@ EXTRACTION_SYSTEM_PROMPT = (
     '"page" (integer, only when the text carries an explicit page marker, else null), '
     '"paragraph" (integer, only when the paragraph is unambiguous, else null). '
     "Never guess page or paragraph numbers. Extract only ideas the chapter "
-    "actually asserts; return [] for a chapter with none."
+    "actually asserts; return [] for a chapter with none. Use only the listed "
+    "types, exactly as written - never invent new type names, even when the "
+    "book uses its own vocabulary. Classify warning signs (what some books "
+    'call "red flags") as Smell.'
 )
 
 REQUIRED_FIELDS = ("type", "title", "content", "summary", "confidence")
@@ -73,7 +77,33 @@ def _optional_int(item: dict[str, object], field: str, position: int) -> int | N
     return value
 
 
-def parse_extraction_response(text: str) -> list[ExtractedObject]:
+def _parse_element(item: object, position: int) -> ExtractedObject:
+    if not isinstance(item, dict):
+        raise ExtractionError(f"element {position} is not a JSON object")
+    for field in REQUIRED_FIELDS:
+        if field not in item:
+            raise ExtractionError(f"element {position} is missing {field!r}")
+    if item["type"] not in KNOWLEDGE_OBJECT_TYPES:
+        raise ExtractionError(f"element {position} has unsupported type {item['type']!r}")
+    confidence = item["confidence"]
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+        raise ExtractionError(f"element {position}: 'confidence' must be a number")
+    return ExtractedObject(
+        type=str(item["type"]),
+        title=str(item["title"]),
+        content=str(item["content"]),
+        summary=str(item["summary"]),
+        confidence=float(confidence),
+        section_index=_optional_int(item, "section_index", position),
+        page=_optional_int(item, "page", position),
+        paragraph=_optional_int(item, "paragraph", position),
+    )
+
+
+def parse_extraction_response(text: str) -> tuple[list[ExtractedObject], list[str]]:
+    """The response's valid knowledge objects, plus a drop reason per invalid
+    element. An unusable response as a whole (not JSON, not an array) still
+    raises ExtractionError; a single bad element only costs that element."""
     payload = strip_fences(text.strip())
     try:
         data = json.loads(payload)
@@ -83,30 +113,13 @@ def parse_extraction_response(text: str) -> list[ExtractedObject]:
         raise ExtractionError("response must be a JSON array of knowledge objects")
 
     objects: list[ExtractedObject] = []
+    dropped: list[str] = []
     for position, item in enumerate(data):
-        if not isinstance(item, dict):
-            raise ExtractionError(f"element {position} is not a JSON object")
-        for field in REQUIRED_FIELDS:
-            if field not in item:
-                raise ExtractionError(f"element {position} is missing {field!r}")
-        if item["type"] not in KNOWLEDGE_OBJECT_TYPES:
-            raise ExtractionError(f"element {position} has unsupported type {item['type']!r}")
-        confidence = item["confidence"]
-        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
-            raise ExtractionError(f"element {position}: 'confidence' must be a number")
-        objects.append(
-            ExtractedObject(
-                type=str(item["type"]),
-                title=str(item["title"]),
-                content=str(item["content"]),
-                summary=str(item["summary"]),
-                confidence=float(confidence),
-                section_index=_optional_int(item, "section_index", position),
-                page=_optional_int(item, "page", position),
-                paragraph=_optional_int(item, "paragraph", position),
-            )
-        )
-    return objects
+        try:
+            objects.append(_parse_element(item, position))
+        except ExtractionError as exc:
+            dropped.append(str(exc))
+    return objects, dropped
 
 
 def chapter_body(markdown: str, start_line: int | None, next_start_line: int | None) -> str:

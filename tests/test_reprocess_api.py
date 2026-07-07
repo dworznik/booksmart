@@ -249,7 +249,7 @@ class TestExtractionScope:
             )
         assert all(ko.embedding_id is not None for ko in objects)
         assert job["model_version"] == "llm=stub-llm-1,embedding=stub-embed-1"
-        assert job["prompt_version"] == "extraction=1"
+        assert job["prompt_version"] == "extraction=2"
 
     def test_extraction_rerun_fails_clearly_when_artifact_missing_on_disk(
         self,
@@ -317,7 +317,7 @@ class TestFullScope:
         assert len(outline_after) == len(outline_before)
         assert job["extraction_version"] == "1"
         assert job["model_version"] == "llm=stub-llm-1,embedding=stub-embed-1"
-        assert job["prompt_version"] == "profile=1,extraction=1,summary=1"
+        assert job["prompt_version"] == "profile=1,extraction=2,summary=1"
 
 
 class TestTokenUsage:

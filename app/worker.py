@@ -281,7 +281,7 @@ def _extract_knowledge(
             return
         total = 0
         for chapter, body in iter_chapter_bodies(chapters, markdown):
-            extracted_objects, response = _complete_and_parse(
+            (extracted_objects, dropped), response = _complete_and_parse(
                 llm,
                 build_extraction_prompt(book, chapter, body),
                 EXTRACTION_SYSTEM_PROMPT,
@@ -290,6 +290,8 @@ def _extract_knowledge(
                 usage,
                 log,
             )
+            for reason in dropped:
+                log(f"extraction: chapter {chapter.position + 1} dropped element — {reason}")
             for extracted in extracted_objects:
                 section, source_location = resolve_source(chapter, extracted.section_index)
                 if extracted.section_index is not None and section is None:
