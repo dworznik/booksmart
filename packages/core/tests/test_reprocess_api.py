@@ -257,7 +257,7 @@ class TestExtractionScope:
         stub_llm: StubLLMProvider,
     ) -> None:
         book_id, first_run = full_ingest(session_factory, settings, storage, stub_llm)
-        Path(str(first_run["output_path"])).unlink()
+        storage.resolve(str(first_run["output_path"])).unlink()
 
         run = reprocess(session_factory, settings, book_id, "extraction")
 
@@ -412,7 +412,7 @@ class TestRunHistory:
         stub_llm: StubLLMProvider,
     ) -> None:
         book_id, first_run = full_ingest(session_factory, settings, storage, stub_llm)
-        Path(str(first_run["output_path"])).unlink()
+        storage.resolve(str(first_run["output_path"])).unlink()
         reprocess(session_factory, settings, book_id, "extraction")
 
         history = runs_for_book(session_factory, book_id)

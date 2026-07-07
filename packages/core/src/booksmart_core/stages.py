@@ -18,7 +18,6 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Literal, TypeVar
 
 from sqlalchemy import delete, select
@@ -117,17 +116,19 @@ def _load_book(session: Session, book_id: uuid.UUID) -> Book:
     return book
 
 
-def _read_parsed_markdown(book: Book) -> str:
+def _read_parsed_markdown(book: Book, storage: BookStorage) -> str:
     """The book's current parsed markdown, resolved from Book.parsed_path.
 
-    A stage that consumes markdown but was run before the book was ever parsed
-    (or whose artifact has vanished from storage) cannot proceed — that is a
-    precondition failure, not a transient one."""
+    The stored pointer is relative to the storage root; ``storage`` resolves it
+    to an absolute path at read time. A stage that consumes markdown but was run
+    before the book was ever parsed (or whose artifact has vanished from
+    storage) cannot proceed — that is a precondition failure, not a transient
+    one."""
     if book.parsed_path is None:
         raise StagePreconditionError(
             "no parsed markdown for this book; run a full ingest first"
         )
-    artifact = Path(book.parsed_path)
+    artifact = storage.resolve(book.parsed_path)
     if not artifact.exists():
         raise StagePreconditionError(
             f"parsed markdown artifact missing from storage: {artifact}"
@@ -177,7 +178,7 @@ def run_parse(
     point Book.parsed_path / parser_used at the result."""
     builder = _ReportBuilder("parse")
     book = _load_book(session, book_id)
-    result = chain.extract(Path(book.storage_path), book.file_format, builder.log)
+    result = chain.extract(storage.resolve(book.storage_path), book.file_format, builder.log)
     parsed_path = storage.save_parsed(book.id, result.markdown)
     book.parsed_path = str(parsed_path)
     book.parser_used = result.parser
@@ -186,11 +187,11 @@ def run_parse(
     return builder.finish()
 
 
-def run_structure(session: Session, book_id: uuid.UUID) -> StageReport:
+def run_structure(session: Session, book_id: uuid.UUID, *, storage: BookStorage) -> StageReport:
     """Replace the book's chapter/section tree from its parsed markdown."""
     builder = _ReportBuilder("structure")
     book = _load_book(session, book_id)
-    markdown = _read_parsed_markdown(book)
+    markdown = _read_parsed_markdown(book, storage)
     builder.log("structure: detecting chapters and sections")
     detected = detect_structure(markdown)
     session.execute(delete(Chapter).where(Chapter.book_id == book.id))
@@ -242,11 +243,13 @@ def run_profile(session: Session, book_id: uuid.UUID, *, llm: LLMProvider) -> St
     return builder.finish()
 
 
-def run_extraction(session: Session, book_id: uuid.UUID, *, llm: LLMProvider) -> StageReport:
+def run_extraction(
+    session: Session, book_id: uuid.UUID, *, llm: LLMProvider, storage: BookStorage
+) -> StageReport:
     """Replace the book's knowledge objects, one LLM call per chapter."""
     builder = _ReportBuilder("extraction")
     book = _load_book(session, book_id)
-    markdown = _read_parsed_markdown(book)
+    markdown = _read_parsed_markdown(book, storage)
     builder.log("extraction: extracting knowledge objects")
     chapters = _book_chapters(session, book)
     session.execute(delete(KnowledgeObject).where(KnowledgeObject.book_id == book.id))
@@ -299,11 +302,13 @@ def run_extraction(session: Session, book_id: uuid.UUID, *, llm: LLMProvider) ->
     return builder.finish()
 
 
-def run_summaries(session: Session, book_id: uuid.UUID, *, llm: LLMProvider) -> StageReport:
+def run_summaries(
+    session: Session, book_id: uuid.UUID, *, llm: LLMProvider, storage: BookStorage
+) -> StageReport:
     """One LLM call per chapter fills chapter/section summaries."""
     builder = _ReportBuilder("summaries")
     book = _load_book(session, book_id)
-    markdown = _read_parsed_markdown(book)
+    markdown = _read_parsed_markdown(book, storage)
     builder.log("summaries: summarizing chapters and sections")
     chapters = _book_chapters(session, book)
     if not chapters:
