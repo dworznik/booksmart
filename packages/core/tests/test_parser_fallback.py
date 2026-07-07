@@ -149,7 +149,7 @@ class TestEpubExtraction:
 
         assert run["status"] == "succeeded"
         assert run["parser_used"] == "pymupdf"
-        parsed = Path(str(run["output_path"]))
+        parsed = storage.resolve(str(run["output_path"]))
         assert "Deep modules hide complexity" in parsed.read_text(encoding="utf-8")
 
 
@@ -205,7 +205,7 @@ class TestOcrFallback:
         # pymupdf4llm OCRs image-only pages itself when tesseract is present,
         # so either stage may have won — but the text must be there.
         assert run["parser_used"] in ("pymupdf", "ocr")
-        parsed = Path(str(run["output_path"])).read_text(encoding="utf-8")
+        parsed = storage.resolve(str(run["output_path"])).read_text(encoding="utf-8")
         assert "SCANNED" in parsed.upper()
 
     def test_text_pdf_does_not_reach_ocr(

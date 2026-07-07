@@ -90,7 +90,8 @@ class TestFullIngest:
         parsed = Path(settings.storage_root) / "parsed" / book_id / "parsed.md"
         assert parsed.exists()
         assert EXTRACT_TEXT in parsed.read_text(encoding="utf-8")
-        assert run["output_path"] == str(parsed)
+        # output_path is persisted relative to the storage root (portability).
+        assert run["output_path"] == str(Path("parsed") / book_id / "parsed.md")
 
     def test_repeated_ingests_accumulate_history(
         self, session_factory: sessionmaker[Session], settings: Settings, storage: BookStorage

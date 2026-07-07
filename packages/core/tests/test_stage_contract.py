@@ -57,13 +57,13 @@ def _drive_per_stage_session(
     with session_factory() as session:
         reports.append(run_parse(session, book_id, chain=chain, storage=storage))
     with session_factory() as session:
-        reports.append(run_structure(session, book_id))
+        reports.append(run_structure(session, book_id, storage=storage))
     with session_factory() as session:
         reports.append(run_profile(session, book_id, llm=stub_llm))
     with session_factory() as session:
-        reports.append(run_extraction(session, book_id, llm=stub_llm))
+        reports.append(run_extraction(session, book_id, llm=stub_llm, storage=storage))
     with session_factory() as session:
-        reports.append(run_summaries(session, book_id, llm=stub_llm))
+        reports.append(run_summaries(session, book_id, llm=stub_llm, storage=storage))
     with session_factory() as session:
         reports.append(
             run_embeddings(session, book_id, embedder=stub_embedder, vector_store=vector_store)
@@ -196,11 +196,11 @@ class TestStagesAreRunBlind:
 
 class TestStagePreconditions:
     def test_stage_on_missing_book_raises_non_retriable_precondition(
-        self, session_factory: sessionmaker[Session]
+        self, session_factory: sessionmaker[Session], storage: BookStorage
     ) -> None:
         with session_factory() as session:
             with pytest.raises(StagePreconditionError) as excinfo:
-                run_structure(session, uuid.uuid4())
+                run_structure(session, uuid.uuid4(), storage=storage)
         assert excinfo.value.retriable is False
 
     def test_markdown_stage_before_parse_raises_precondition(
@@ -213,7 +213,7 @@ class TestStagePreconditions:
         book_id = uuid.UUID(register_book_with_hints(session_factory, storage))
         with session_factory() as session:
             with pytest.raises(StagePreconditionError, match="parsed markdown"):
-                run_extraction(session, book_id, llm=stub_llm)
+                run_extraction(session, book_id, llm=stub_llm, storage=storage)
 
 
 class TestErrorTaxonomy:
@@ -247,7 +247,7 @@ class TestErrorTaxonomy:
         with session_factory() as session:
             run_parse(session, book_id, chain=chain, storage=storage)
         with session_factory() as session:
-            run_structure(session, book_id)
+            run_structure(session, book_id, storage=storage)
 
         # The model returns non-JSON on both the call and its in-stage retry.
         from booksmart_core.extraction import EXTRACTION_SYSTEM_PROMPT
@@ -255,7 +255,7 @@ class TestErrorTaxonomy:
         stub_llm.queue(EXTRACTION_SYSTEM_PROMPT, "not json", "still not json")
         with session_factory() as session:
             with pytest.raises(ProviderResponseError) as excinfo:
-                run_extraction(session, book_id, llm=stub_llm)
+                run_extraction(session, book_id, llm=stub_llm, storage=storage)
         assert excinfo.value.retriable is True
 
 

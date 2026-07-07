@@ -6,7 +6,33 @@ on:
   pull_request:
 
 jobs:
-  test:
+  # SQLite is the CLI's dialect and the portable default: the whole suite must
+  # pass with zero external services.
+  test-sqlite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tesseract (OCR fallback parser)
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install the workspace
+        run: uv sync --frozen
+
+      - name: Typecheck
+        run: uv run mypy
+
+      - name: Test (SQLite)
+        # No BOOKSMART_TEST_DATABASE_URL -> conftest defaults to a SQLite file.
+        run: uv run pytest -q
+
+  # The same suite against Postgres, so a Postgres-only regression (or a lost
+  # pg-ism) cannot land silently.
+  test-postgres:
     runs-on: ubuntu-latest
 
     services:
@@ -40,10 +66,7 @@ jobs:
       - name: Install the workspace
         run: uv sync --frozen
 
-      - name: Typecheck
-        run: uv run mypy
-
-      - name: Test
+      - name: Test (Postgres)
         run: uv run pytest -q
 
   build:

@@ -160,16 +160,16 @@ def _dispatch(
     if stage == "parse":
         return run_parse(session, book_id, chain=chain, storage=storage)
     if stage == "structure":
-        return run_structure(session, book_id)
+        return run_structure(session, book_id, storage=storage)
     if stage == "profile":
         assert llm is not None
         return run_profile(session, book_id, llm=llm)
     if stage == "extraction":
         assert llm is not None
-        return run_extraction(session, book_id, llm=llm)
+        return run_extraction(session, book_id, llm=llm, storage=storage)
     if stage == "summaries":
         assert llm is not None
-        return run_summaries(session, book_id, llm=llm)
+        return run_summaries(session, book_id, llm=llm, storage=storage)
     assert embedder is not None and vector_store is not None
     return run_embeddings(session, book_id, embedder=embedder, vector_store=vector_store)
 

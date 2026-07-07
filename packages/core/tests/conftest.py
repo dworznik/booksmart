@@ -1,12 +1,17 @@
 """Integration test fixtures and read-model helpers.
 
-Tests run against a real PostgreSQL instance; a dedicated test database is
-created per session and migrated with Alembic. The HTTP server is gone
-(booksmart-core is a library now), so tests drive the pipeline through the
-public Runner / Stage functions and read results straight from the database.
-The helpers at the bottom rebuild the read shapes the old GET routers served
-(a book's structure, its latest profile, its knowledge objects, its runs) so
-ported scenario tests can keep asserting on the same shapes.
+The suite is dialect-neutral and runs against whichever database
+``BOOKSMART_TEST_DATABASE_URL`` names. Unset, it defaults to a service-free
+SQLite file (the CLI's dialect and the local/default CI path); CI also runs the
+whole suite a second time against a Postgres service container, so a Postgres-ism
+cannot land silently. A dedicated database is migrated once per session with the
+same single Alembic history a consumer (CLI, booksmart-api) uses.
+
+The HTTP server is gone (booksmart-core is a library now), so tests drive the
+pipeline through the public Runner / Stage functions and read results straight
+from the database. The helpers at the bottom rebuild the read shapes the old GET
+routers served (a book's structure, its latest profile, its knowledge objects,
+its runs) so ported scenario tests can keep asserting on the same shapes.
 """
 
 import io
@@ -19,29 +24,41 @@ import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
 from qdrant_client import QdrantClient
-from sqlalchemy import Engine, create_engine, select, text
+from sqlalchemy import Engine, create_engine, event, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from booksmart_core import MIGRATIONS_PATH
 from booksmart_core.config import Settings
 from booksmart_core.extraction import EXTRACTION_SYSTEM_PROMPT
 from booksmart_core.llm import LLMResponse
-from booksmart_core.models import Book, BookProfile, Chapter, KnowledgeObject, Run
+from booksmart_core.models import Base, Book, BookProfile, Chapter, KnowledgeObject, Run
 from booksmart_core.runner import execute_run
 from booksmart_core.storage import BookStorage, hash_stream
 from booksmart_core.summaries import SUMMARY_SYSTEM_PROMPT
 from booksmart_core.vectors import VectorStore
 
-TEST_DATABASE_URL = os.environ.get(
-    "BOOKSMART_TEST_DATABASE_URL",
-    "postgresql+psycopg://booksmart:booksmart@localhost:5432/booksmart_test",
-)
+# Unset -> a portable, service-free SQLite database resolved per session below.
+TEST_DATABASE_URL = os.environ.get("BOOKSMART_TEST_DATABASE_URL", "")
 
 
-@pytest.fixture(scope="session")
-def database_url() -> str:
-    admin_url = TEST_DATABASE_URL.rsplit("/", 1)[0] + "/postgres"
-    test_db_name = TEST_DATABASE_URL.rsplit("/", 1)[1]
+def enable_sqlite_foreign_keys(engine: Engine) -> None:
+    """Make a SQLite engine enforce foreign keys on every connection.
+
+    SQLite honours FKs (and thus the ON DELETE CASCADE the stages' bulk deletes
+    rely on) only when asked, per connection. Shared by the session fixture and
+    the standalone engines the portability test builds."""
+
+    @event.listens_for(engine, "connect")
+    def _enable_fk(dbapi_conn: object, _: object) -> None:
+        cursor = dbapi_conn.cursor()  # type: ignore[attr-defined]
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+
+def _ensure_postgres_database(url: str) -> None:
+    """Create the Postgres test database if it does not exist yet."""
+    admin_url = url.rsplit("/", 1)[0] + "/postgres"
+    test_db_name = url.rsplit("/", 1)[1]
     admin_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT")
     with admin_engine.connect() as conn:
         exists = conn.execute(
@@ -52,13 +69,23 @@ def database_url() -> str:
             conn.execute(text(f'CREATE DATABASE "{test_db_name}"'))
     admin_engine.dispose()
 
+
+@pytest.fixture(scope="session")
+def database_url(tmp_path_factory: pytest.TempPathFactory) -> str:
+    url = TEST_DATABASE_URL
+    if not url:
+        db_path = tmp_path_factory.mktemp("db") / "booksmart_test.db"
+        url = f"sqlite:///{db_path}"
+    if url.startswith("postgresql"):
+        _ensure_postgres_database(url)
+
     # Resolve the migration history from the installed package — the same path a
     # consumer (CLI, booksmart-api) uses — rather than a source-tree layout.
     alembic_cfg = AlembicConfig()
     alembic_cfg.set_main_option("script_location", str(MIGRATIONS_PATH))
-    alembic_cfg.set_main_option("sqlalchemy.url", TEST_DATABASE_URL)
+    alembic_cfg.set_main_option("sqlalchemy.url", url)
     command.upgrade(alembic_cfg, "head")
-    return TEST_DATABASE_URL
+    return url
 
 
 @pytest.fixture()
@@ -66,22 +93,31 @@ def settings(database_url: str, tmp_path: Path) -> Settings:
     return Settings(database_url=database_url, storage_root=tmp_path / "storage")
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def db_engine(database_url: str) -> Iterator[Engine]:
     engine = create_engine(database_url)
+    if engine.dialect.name == "sqlite":
+        enable_sqlite_foreign_keys(engine)
     yield engine
     engine.dispose()
 
 
+def _reset_database(engine: Engine) -> None:
+    """Empty every table, giving each test a clean slate (the role the old
+    TestClient fixture played). Postgres truncates books and cascades; SQLite
+    has no TRUNCATE, so delete each table children-first with FKs enforced."""
+    with engine.begin() as conn:
+        if engine.dialect.name == "postgresql":
+            conn.execute(text("TRUNCATE TABLE books CASCADE"))
+        else:
+            for table in reversed(Base.metadata.sorted_tables):
+                conn.execute(table.delete())
+
+
 @pytest.fixture()
 def session_factory(db_engine: Engine) -> sessionmaker[Session]:
-    """A clean-slate session factory for driving the pipeline in tests.
-
-    Truncating books here (cascading to every dependent table) gives each test
-    an empty database — the role the old TestClient fixture played."""
-    with db_engine.connect() as conn:
-        conn.execute(text("TRUNCATE TABLE books CASCADE"))
-        conn.commit()
+    """A clean-slate session factory for driving the pipeline in tests."""
+    _reset_database(db_engine)
     return sessionmaker(bind=db_engine)
 
 

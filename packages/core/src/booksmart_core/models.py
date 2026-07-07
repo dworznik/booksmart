@@ -1,12 +1,21 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Text, func
+from sqlalchemy import DateTime, ForeignKey, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
     pass
+
+
+def _utcnow() -> datetime:
+    """Timestamp default computed client-side rather than via a server ``now()``.
+
+    The baseline migration is dialect-neutral (sqlite and Postgres share one
+    history), and ``now()`` is a Postgres-ism; generating the value in Python
+    keeps inserts portable across both."""
+    return datetime.now(UTC)
 
 
 class Book(Base):
@@ -33,7 +42,7 @@ class Book(Base):
     checksum: Mapped[str]
     file_hash: Mapped[str]
     uploaded_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True), default=_utcnow
     )
 
     # The current parsed-markdown artifact and the parser that produced it,
@@ -104,7 +113,7 @@ class BookProfile(Base):
     model: Mapped[str]
     prompt_version: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True), default=_utcnow
     )
 
 
@@ -141,7 +150,7 @@ class KnowledgeObject(Base):
     embedding_model: Mapped[str | None]
     embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True), default=_utcnow
     )
 
 
@@ -176,6 +185,6 @@ class Run(Base):
     output_tokens: Mapped[int | None]
     # created_at is the execution start (there is no queued state before it).
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True), default=_utcnow
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
