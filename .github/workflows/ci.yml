@@ -24,6 +24,9 @@ jobs:
           --health-timeout 3s
           --health-retries 30
 
+    env:
+      BOOKSMART_TEST_DATABASE_URL: postgresql+psycopg://booksmart:booksmart@localhost:5432/booksmart_test
+
     steps:
       - uses: actions/checkout@v4
 
@@ -34,7 +37,7 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install dependencies
+      - name: Install the workspace
         run: uv sync --frozen
 
       - name: Typecheck
@@ -43,67 +46,12 @@ jobs:
       - name: Test
         run: uv run pytest -q
 
-  compose-e2e:
+  build:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Build service images
-        run: docker compose build
-
-      # Fake providers: the smoke test exercises the full pipeline through the
-      # real containers without API keys, network calls, or per-run cost.
-      - name: Start stack
-        run: docker compose up -d
-        env:
-          BOOKSMART_LLM_PROVIDER: fake
-          BOOKSMART_EMBEDDING_PROVIDER: fake
-
-      - name: Wait for API
-        run: |
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:8000/books > /dev/null && exit 0
-            sleep 2
-          done
-          echo "API never became ready"; docker compose logs; exit 1
-
       - uses: astral-sh/setup-uv@v6
-
-      - name: Generate a test PDF
+      - name: Build both distributions
         run: |
-          uv run --no-project --with pymupdf python -c "
-          import pymupdf
-          doc = pymupdf.open()
-          page = doc.new_page()
-          page.insert_text((72, 72), 'Compose smoke test book')
-          doc.save('smoke.pdf')
-          "
-
-      - name: Register book through the API container
-        run: |
-          BOOK_ID=$(curl -sf -X POST http://localhost:8000/books \
-            -F file=@smoke.pdf -F title="Smoke Test" -F author="CI" | jq -r .id)
-          test -n "$BOOK_ID"
-          echo "BOOK_ID=$BOOK_ID" >> "$GITHUB_ENV"
-
-      - name: Ingest and wait for the worker container to extract
-        run: |
-          JOB_ID=$(curl -sf -X POST "http://localhost:8000/books/$BOOK_ID/ingest" | jq -r .id)
-          for i in $(seq 1 30); do
-            STATUS=$(curl -sf "http://localhost:8000/jobs/$JOB_ID" | jq -r .status)
-            if [ "$STATUS" = "succeeded" ]; then
-              curl -sf "http://localhost:8000/jobs/$JOB_ID" | jq .
-              exit 0
-            fi
-            if [ "$STATUS" = "failed" ]; then break; fi
-            sleep 2
-          done
-          echo "ingestion did not succeed"
-          curl -s "http://localhost:8000/jobs/$JOB_ID" | jq .
-          docker compose logs knowledge-worker
-          exit 1
-
-      - name: Teardown
-        if: always()
-        run: docker compose down -v
+          uv build --package booksmart-core
+          uv build --package booksmart

@@ -3,6 +3,8 @@ __pycache__/
 .venv/
 .pytest_cache/
 .mypy_cache/
+dist/
+*.egg-info/
 
 # Object storage contents stay local; keep the layout tracked via .gitkeep
 storage/*/*
