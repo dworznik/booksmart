@@ -85,30 +85,36 @@ class EmbeddingLimits:
 # enforce it; if we don't, we say so and defer to the API.
 
 _ANTHROPIC_LLM_LIMITS = {
+    # Both models cap output at 128k, but this provider calls the API
+    # non-streaming and the SDK refuses non-streaming requests above ~21.3k
+    # tokens ("streaming is required for operations that may take longer than
+    # 10 minutes"), so the usable Limit is the non-streaming ceiling.
     # valid_reasoning_efforts stays None: the Anthropic provider does not take
     # the reasoning-effort Preference, so there is nothing to validate.
-    "claude-opus-4-8": LLMLimits(max_output_tokens=32000),
-    "claude-sonnet-5": LLMLimits(max_output_tokens=64000),
+    "claude-opus-4-8": LLMLimits(max_output_tokens=20000),
+    "claude-sonnet-5": LLMLimits(max_output_tokens=20000),
 }
-_ANTHROPIC_LLM_DEFAULT = LLMLimits(max_output_tokens=32000)
+_ANTHROPIC_LLM_DEFAULT = LLMLimits(max_output_tokens=20000)
 
 _OPENAI_LLM_LIMITS = {
+    # gpt-5.5 does not accept "minimal" (unlike earlier gpt-5 models).
     "gpt-5.5": LLMLimits(
         max_output_tokens=128000,
-        valid_reasoning_efforts=("none", "minimal", "low", "medium", "high"),
+        valid_reasoning_efforts=("none", "low", "medium", "high", "xhigh"),
     ),
 }
 _OPENAI_LLM_DEFAULT = LLMLimits(max_output_tokens=32000)
 
 _GEMINI_LLM_LIMITS = {
-    # 2.5 Pro rejects "none" (thinking cannot be disabled); Flash accepts it.
+    # Thinking cannot be turned off on 2.5 Pro: it rejects "none" but accepts
+    # "minimal" (a 1024-token thinking budget); Flash accepts both.
     "gemini-2.5-pro": LLMLimits(
         max_output_tokens=65536,
-        valid_reasoning_efforts=("low", "medium", "high"),
+        valid_reasoning_efforts=("minimal", "low", "medium", "high"),
     ),
     "gemini-2.5-flash": LLMLimits(
         max_output_tokens=65536,
-        valid_reasoning_efforts=("none", "low", "medium", "high"),
+        valid_reasoning_efforts=("none", "minimal", "low", "medium", "high"),
     ),
 }
 _GEMINI_LLM_DEFAULT = LLMLimits(max_output_tokens=32000)

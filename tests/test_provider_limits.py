@@ -36,9 +36,10 @@ class TestLLMLimitResolution:
         assert "none" not in pro.valid_reasoning_efforts
 
     def test_known_anthropic_model_resolves_max_output_tokens(self) -> None:
+        # The SDK's non-streaming ceiling, not the model's 128k API cap.
         provider = AnthropicProvider(model="claude-opus-4-8", api_key="test")
 
-        assert provider.max_output_tokens == 32000
+        assert provider.max_output_tokens == 20000
 
     def test_known_openai_model_resolves_max_output_tokens(self) -> None:
         provider = OpenAIProvider(model="gpt-5.5", api_key="test")
@@ -61,7 +62,7 @@ class TestLLMLimitResolution:
         with caplog.at_level(logging.WARNING, logger="app.llm"):
             provider = AnthropicProvider(model="claude-10", api_key="test")
 
-        assert provider.max_output_tokens == 32000
+        assert provider.max_output_tokens == 20000
         assert any("claude-10" in record.message for record in caplog.records)
 
     def test_unknown_openai_model_falls_back_to_vendor_defaults_with_log(
@@ -121,7 +122,7 @@ class TestLLMLimitResolution:
 
         provider.complete("Describe.")
 
-        assert captured["max_tokens"] == 32000
+        assert captured["max_tokens"] == 20000
 
 
 class TestReasoningEffortValidation:
@@ -132,7 +133,7 @@ class TestReasoningEffortValidation:
         message = str(excinfo.value)
         assert "'none'" in message
         assert "gemini-2.5-pro" in message
-        assert "low, medium, high" in message
+        assert "minimal, low, medium, high" in message
 
     def test_valid_effort_for_known_model_is_accepted(self) -> None:
         provider = GeminiProvider(
