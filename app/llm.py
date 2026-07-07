@@ -6,7 +6,7 @@ BOOKSMART_LLM_MODEL), never hardcoded, so ingestion stages that need a model
 API keys come from settings or fall back to the SDKs' standard environment
 variables (ANTHROPIC_API_KEY, OPENAI_API_KEY).
 
-Capability knowledge lives here too (see CONTEXT.md): a Limit is a
+Vendor API facts live here too (see CONTEXT.md): a Limit is a
 provider-declared API fact resolved per (vendor, model) at construction and
 exposed as plain instance attributes; a Preference is a user choice validated
 against Limits before any call is made. Consumers ask the provider
@@ -57,9 +57,9 @@ DEFAULT_EMBEDDING_MODELS = {
 
 class ProviderConfigError(ValueError):
     """A Preference conflicts with a Limit (or the configuration is otherwise
-    deterministically wrong). Raised at provider construction, never mid-run;
-    retrying cannot fix it, so it maps to a non-retriable error in durable
-    execution."""
+    deterministically wrong) — at provider construction or at the first write
+    the model-locked vector collection rejects. Retrying cannot fix it, so it
+    maps to a non-retriable error in durable execution."""
 
 
 @dataclass(frozen=True)

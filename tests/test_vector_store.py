@@ -63,18 +63,22 @@ class TestModelLockedCollection:
         with pytest.raises(ProviderConfigError):
             store.replace_book_points("book-1", make_records(size=3), embedding_model="embed-b")
 
-    def test_legacy_collection_without_metadata_is_adopted(self, store: VectorStore) -> None:
-        # Collections created before model locking carry no metadata; the first
-        # write after the upgrade stamps the configured model instead of failing.
+    def test_legacy_collection_without_metadata_is_rejected(self, store: VectorStore) -> None:
+        # A pre-lock collection records no model, so the lock cannot be
+        # verified; stamping the configured model onto it would be the silent
+        # mixing ADR 0001 forbids. The operator must migrate explicitly.
         store.client.create_collection(
             store.collection,
             vectors_config=qmodels.VectorParams(size=3, distance=qmodels.Distance.COSINE),
         )
 
-        store.replace_book_points("book-1", make_records(), embedding_model="embed-a")
+        with pytest.raises(ProviderConfigError) as excinfo:
+            store.replace_book_points("book-1", make_records(), embedding_model="embed-a")
 
-        info = store.client.get_collection(store.collection)
-        assert info.config.metadata == {"embedding_model": "embed-a"}
+        message = str(excinfo.value)
+        assert "predates model locking" in message
+        assert "drop" in message.lower()
+        assert "reprocess" in message.lower()
 
     def test_empty_replace_needs_no_collection(self, store: VectorStore) -> None:
         store.replace_book_points("book-1", [], embedding_model="embed-a")

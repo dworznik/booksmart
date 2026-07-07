@@ -55,6 +55,25 @@ class TestLLMLimitResolution:
         assert provider.valid_reasoning_efforts is None
         assert any("gemini-9-experimental" in record.message for record in caplog.records)
 
+    def test_unknown_anthropic_model_falls_back_to_vendor_defaults_with_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="app.llm"):
+            provider = AnthropicProvider(model="claude-10", api_key="test")
+
+        assert provider.max_output_tokens == 32000
+        assert any("claude-10" in record.message for record in caplog.records)
+
+    def test_unknown_openai_model_falls_back_to_vendor_defaults_with_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="app.llm"):
+            provider = OpenAIProvider(model="gpt-7", api_key="test")
+
+        assert provider.max_output_tokens == 32000
+        assert provider.valid_reasoning_efforts is None
+        assert any("gpt-7" in record.message for record in caplog.records)
+
     def test_known_model_resolves_silently(self, caplog: pytest.LogCaptureFixture) -> None:
         with caplog.at_level(logging.WARNING, logger="app.llm"):
             GeminiProvider(model="gemini-2.5-flash", api_key="test")
@@ -185,3 +204,15 @@ class TestFakeProviderLimits:
 
         assert provider.max_batch == 100
         assert provider.embedding_dimensions == 8
+
+    def test_unknown_fake_models_fall_back_to_vendor_defaults_with_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="app.llm"):
+            llm = FakeLLMProvider(model="fake-llm-2")
+            embedder = FakeEmbeddingProvider(model="fake-embed-2")
+
+        assert llm.max_output_tokens == 32000
+        assert embedder.max_batch == 100
+        assert embedder.embedding_dimensions is None
+        assert len(caplog.records) == 2

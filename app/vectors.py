@@ -13,7 +13,6 @@ no operator can diagnose from symptoms. Switching models is an explicit
 migration: drop the collection and reprocess embeddings for every book.
 """
 
-import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,8 +20,6 @@ from qdrant_client import QdrantClient
 from qdrant_client import models as qmodels
 
 from app.llm import ProviderConfigError
-
-logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "booksmart"
 
@@ -55,17 +52,16 @@ class VectorStore:
         metadata = self.client.get_collection(self.collection).config.metadata or {}
         locked_model = metadata.get(EMBEDDING_MODEL_KEY)
         if locked_model is None:
-            # Collections created before model locking carry no metadata;
-            # adopt the configured model rather than stranding the deployment.
-            logger.warning(
-                "collection %r predates model locking; recording embedding model %r",
-                self.collection,
-                embedding_model,
+            # A collection created before model locking records no model, so
+            # the lock cannot be verified — stamping the configured model onto
+            # vectors that may come from another model is exactly the silent
+            # mixing ADR 0001 forbids.
+            raise ProviderConfigError(
+                f"vector collection {self.collection!r} predates model locking and "
+                f"records no embedding model; drop the collection and reprocess "
+                f"embeddings to adopt model-locked storage (ADR 0001)"
             )
-            self.client.update_collection(
-                self.collection, metadata={EMBEDDING_MODEL_KEY: embedding_model}
-            )
-        elif locked_model != embedding_model:
+        if locked_model != embedding_model:
             raise ProviderConfigError(
                 f"vector collection {self.collection!r} is locked to embedding model "
                 f"{locked_model!r} but the configured embedder is {embedding_model!r}; "
