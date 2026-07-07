@@ -1,13 +1,14 @@
-"""Integration tests for the parser preference chain inside the worker.
+"""Integration tests for the parser preference chain inside the parse stage.
 
 Marker is an optional dependency and not installed in dev/CI, so the chain's
 first attempt is always logged as unavailable and extraction falls through to
 PyMuPDF; the OCR tests need tesseract on the machine (present in CI and the
-worker image).
+image).
 """
 
 import io
 import shutil
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -17,7 +18,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
-from app.worker import process_one_job
+from app.runner import execute_run
 
 from .test_ingestion_api import CORRUPT_PDF_BYTES, make_pdf_bytes, register_book
 
@@ -71,9 +72,10 @@ def make_epub_bytes(text: str = "Deep modules hide complexity behind simple inte
 
 
 def run_job(client: TestClient, session_factory: sessionmaker[Session], settings: Settings, book_id: str) -> dict[str, object]:
-    job_id = client.post(f"/books/{book_id}/ingest").json()["id"]
-    assert process_one_job(session_factory, settings.storage_root) is True
-    job: dict[str, object] = client.get(f"/jobs/{job_id}").json()
+    """Trigger a full ingest synchronously and return the finished Run."""
+    response = client.post(f"/books/{book_id}/ingest")
+    assert response.status_code == 200, response.text
+    job: dict[str, object] = response.json()
     return job
 
 
@@ -87,13 +89,6 @@ class TestParserRecording:
 
         assert job["status"] == "succeeded"
         assert job["parser_used"] == "pymupdf"
-
-    def test_queued_job_has_no_parser_used(self, client: TestClient) -> None:
-        book_id = register_book(client)
-
-        job = client.post(f"/books/{book_id}/ingest").json()
-
-        assert job["parser_used"] is None
 
 
 class TestParseLogs:
@@ -123,22 +118,23 @@ class TestParseLogs:
         assert "pymupdf" in log_file.read_text(encoding="utf-8")
 
 
-class TestWorkerFallback:
-    def test_job_succeeds_via_fallback_when_preferred_parser_fails(
+class TestParserChainFallback:
+    def test_run_succeeds_via_fallback_when_preferred_parser_fails(
         self, client: TestClient, session_factory: sessionmaker[Session], settings: Settings
     ) -> None:
         from app.parsing import ParserChain, PyMuPDFParser
 
         book_id = register_book(client)
-        job_id = client.post(f"/books/{book_id}/ingest").json()["id"]
         chain = ParserChain([FailingParser(), PyMuPDFParser()])
 
-        assert process_one_job(session_factory, settings.storage_root, chain=chain) is True
+        run_id = execute_run(
+            session_factory, settings.storage_root, uuid.UUID(book_id), "full", chain=chain
+        )
 
-        job = client.get(f"/jobs/{job_id}").json()
+        job = client.get(f"/jobs/{run_id}").json()
         assert job["status"] == "succeeded"
         assert job["parser_used"] == "pymupdf"
-        log = (Path(settings.storage_root) / "logs" / f"{job_id}.log").read_text(encoding="utf-8")
+        log = (Path(settings.storage_root) / "logs" / f"{run_id}.log").read_text(encoding="utf-8")
         assert "always-fails" in log and "failed" in log
 
 

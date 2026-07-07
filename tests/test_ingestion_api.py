@@ -1,4 +1,7 @@
-"""End-to-end tests for ingestion: trigger job -> worker extracts -> parsed Markdown."""
+"""End-to-end tests for ingestion: trigger a run -> pipeline extracts -> parsed Markdown.
+
+With the polling worker gone (ADR 0002), POST /ingest runs the whole pipeline
+synchronously and returns the finished Run — there is no queued state."""
 
 import io
 import zipfile
@@ -6,10 +9,8 @@ from pathlib import Path
 
 import pymupdf
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
-from app.worker import process_one_job
 
 EXTRACT_TEXT = "Ubiquitous Language rules the domain"
 
@@ -50,20 +51,22 @@ def register_book(
 
 
 class TestTriggerIngestion:
-    def test_ingest_returns_202_with_queued_job(self, client: TestClient) -> None:
+    def test_ingest_runs_synchronously_and_returns_succeeded_run(
+        self, client: TestClient
+    ) -> None:
         book_id = register_book(client)
 
         response = client.post(f"/books/{book_id}/ingest")
 
-        assert response.status_code == 202
-        job = response.json()
-        assert job["id"]
-        assert job["book_id"] == book_id
-        assert job["status"] == "queued"
-        assert job["created_at"]
-        assert job["started_at"] is None
-        assert job["finished_at"] is None
-        assert job["error"] is None
+        assert response.status_code == 200
+        run = response.json()
+        assert run["id"]
+        assert run["book_id"] == book_id
+        assert run["status"] == "succeeded"
+        assert run["scope"] == "full"
+        assert run["created_at"]
+        assert run["finished_at"]
+        assert run["error"] is None
 
     def test_ingest_unknown_book_returns_404(self, client: TestClient) -> None:
         response = client.post("/books/00000000-0000-0000-0000-000000000000/ingest")
@@ -81,8 +84,8 @@ class TestTriggerIngestion:
         assert client.get(f"/jobs/{second['id']}").status_code == 200
 
 
-class TestJobStatus:
-    def test_queued_job_is_reported(self, client: TestClient) -> None:
+class TestRunStatus:
+    def test_run_is_retrievable_after_ingest(self, client: TestClient) -> None:
         book_id = register_book(client)
         created = client.post(f"/books/{book_id}/ingest").json()
 
@@ -91,80 +94,53 @@ class TestJobStatus:
         assert response.status_code == 200
         assert response.json() == created
 
-    def test_unknown_job_returns_404(self, client: TestClient) -> None:
+    def test_unknown_run_returns_404(self, client: TestClient) -> None:
         response = client.get("/jobs/00000000-0000-0000-0000-000000000000")
 
         assert response.status_code == 404
 
 
-class TestWorkerExtraction:
-    def test_empty_queue_processes_nothing(
-        self, client: TestClient, session_factory: sessionmaker[Session], settings: Settings
-    ) -> None:
-        assert process_one_job(session_factory, settings.storage_root) is False
-
-    def test_successful_extraction_marks_job_succeeded(
-        self, client: TestClient, session_factory: sessionmaker[Session], settings: Settings
-    ) -> None:
+class TestPipelineExtraction:
+    def test_successful_extraction_marks_run_succeeded(self, client: TestClient) -> None:
         book_id = register_book(client)
-        job_id = client.post(f"/books/{book_id}/ingest").json()["id"]
 
-        assert process_one_job(session_factory, settings.storage_root) is True
+        run = client.post(f"/books/{book_id}/ingest").json()
 
-        job = client.get(f"/jobs/{job_id}").json()
-        assert job["status"] == "succeeded"
-        assert job["started_at"] is not None
-        assert job["finished_at"] is not None
-        assert job["error"] is None
+        assert run["status"] == "succeeded"
+        assert run["finished_at"] is not None
+        assert run["error"] is None
 
     def test_parsed_markdown_written_to_storage(
-        self, client: TestClient, session_factory: sessionmaker[Session], settings: Settings
+        self, client: TestClient, settings: Settings
     ) -> None:
         book_id = register_book(client)
-        job_id = client.post(f"/books/{book_id}/ingest").json()["id"]
 
-        process_one_job(session_factory, settings.storage_root)
+        run = client.post(f"/books/{book_id}/ingest").json()
 
-        parsed = Path(settings.storage_root) / "parsed" / book_id / f"{job_id}.md"
+        parsed = Path(settings.storage_root) / "parsed" / book_id / "parsed.md"
         assert parsed.exists()
         assert EXTRACT_TEXT in parsed.read_text(encoding="utf-8")
-        assert client.get(f"/jobs/{job_id}").json()["output_path"] == str(parsed)
+        assert run["output_path"] == str(parsed)
 
-    def test_corrupt_pdf_marks_job_failed_with_error(
-        self, client: TestClient, session_factory: sessionmaker[Session], settings: Settings
+    def test_corrupt_pdf_marks_run_failed_with_error(
+        self, client: TestClient, settings: Settings
     ) -> None:
         book_id = register_book(client, content=CORRUPT_PDF_BYTES)
-        job_id = client.post(f"/books/{book_id}/ingest").json()["id"]
 
-        assert process_one_job(session_factory, settings.storage_root) is True
+        run = client.post(f"/books/{book_id}/ingest").json()
 
-        job = client.get(f"/jobs/{job_id}").json()
-        assert job["status"] == "failed"
-        assert job["error"]
-        assert job["finished_at"] is not None
-        assert job["output_path"] is None
+        assert run["status"] == "failed"
+        assert run["error"]
+        assert run["finished_at"] is not None
+        assert run["output_path"] is None
         assert not (Path(settings.storage_root) / "parsed" / book_id).exists()
 
-    def test_unparseable_epub_marks_job_failed_with_clear_error(
-        self, client: TestClient, session_factory: sessionmaker[Session], settings: Settings
+    def test_unparseable_epub_marks_run_failed_with_clear_error(
+        self, client: TestClient
     ) -> None:
         book_id = register_book(client, filename="ddd.epub", content=make_fake_epub_bytes())
-        job_id = client.post(f"/books/{book_id}/ingest").json()["id"]
 
-        process_one_job(session_factory, settings.storage_root)
+        run = client.post(f"/books/{book_id}/ingest").json()
 
-        job = client.get(f"/jobs/{job_id}").json()
-        assert job["status"] == "failed"
-        assert "epub" in job["error"].lower()
-
-    def test_oldest_queued_job_is_claimed_first(
-        self, client: TestClient, session_factory: sessionmaker[Session], settings: Settings
-    ) -> None:
-        book_id = register_book(client)
-        first_id = client.post(f"/books/{book_id}/ingest").json()["id"]
-        second_id = client.post(f"/books/{book_id}/ingest").json()["id"]
-
-        process_one_job(session_factory, settings.storage_root)
-
-        assert client.get(f"/jobs/{first_id}").json()["status"] == "succeeded"
-        assert client.get(f"/jobs/{second_id}").json()["status"] == "queued"
+        assert run["status"] == "failed"
+        assert "epub" in run["error"].lower()

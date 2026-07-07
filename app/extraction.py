@@ -12,6 +12,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Literal, get_args
 
+from app.errors import ProviderResponseError
 from app.llm import strip_fences
 from app.models import Book, Chapter, Section
 
@@ -52,8 +53,10 @@ EXTRACTION_SYSTEM_PROMPT = (
 REQUIRED_FIELDS = ("type", "title", "content", "summary", "confidence")
 
 
-class ExtractionError(RuntimeError):
-    """The LLM response could not be turned into valid knowledge objects."""
+class ExtractionError(ProviderResponseError):
+    """The LLM response could not be turned into valid knowledge objects. A
+    retriable ProviderResponseError: when it escapes a stage (unparseable even
+    after the stage's own retry), a fresh attempt may still succeed."""
 
 
 @dataclass(frozen=True)

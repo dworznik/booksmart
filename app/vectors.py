@@ -19,7 +19,7 @@ from typing import Any
 from qdrant_client import QdrantClient
 from qdrant_client import models as qmodels
 
-from app.llm import ProviderConfigError
+from app.errors import ProviderConfigError
 
 COLLECTION_NAME = "booksmart"
 

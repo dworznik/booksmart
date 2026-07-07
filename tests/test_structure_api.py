@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
-from app.worker import process_one_job
 
 from .test_ingestion_api import register_book
 
@@ -37,9 +36,14 @@ def make_structured_pdf_bytes() -> bytes:
 
 
 def ingest(client: TestClient, session_factory: sessionmaker[Session], settings: Settings, book_id: str) -> dict[str, object]:
-    job_id = client.post(f"/books/{book_id}/ingest").json()["id"]
-    assert process_one_job(session_factory, settings.storage_root) is True
-    job: dict[str, object] = client.get(f"/jobs/{job_id}").json()
+    """Trigger a full ingest. With the polling worker gone (ADR 0002), the
+    request runs the whole pipeline synchronously and returns the finished Run.
+
+    session_factory / settings are unused now — the endpoint owns execution —
+    but kept in the signature so the many call sites need no change."""
+    response = client.post(f"/books/{book_id}/ingest")
+    assert response.status_code == 200, response.text
+    job: dict[str, object] = response.json()
     return job
 
 
@@ -101,7 +105,7 @@ class TestStructureDetectionStage:
         def explode(markdown: str) -> object:
             raise RuntimeError("structure stage blew up")
 
-        monkeypatch.setattr("app.worker.detect_structure", explode)
+        monkeypatch.setattr("app.stages.detect_structure", explode)
         job = ingest(client, session_factory, settings, book_id)
 
         assert job["status"] == "failed"

@@ -26,6 +26,10 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from app.config import Settings
 
+# ProviderConfigError is defined in app.errors now; re-exported here because
+# provider construction (and app.vectors) has always raised it from this seam.
+from app.errors import ProviderConfigError, ProviderResponseError
+
 logger = logging.getLogger(__name__)
 
 # Both SDKs retry rate limits and transient errors with exponential backoff,
@@ -53,13 +57,6 @@ DEFAULT_EMBEDDING_MODELS = {
     # Deterministic fixed-size vectors, no keys or network (CI, local dev).
     "fake": "fake-embed-1",
 }
-
-
-class ProviderConfigError(ValueError):
-    """A Preference conflicts with a Limit (or the configuration is otherwise
-    deterministically wrong) — at provider construction or at the first write
-    the model-locked vector collection rejects. Retrying cannot fix it, so it
-    maps to a non-retriable error in durable execution."""
 
 
 @dataclass(frozen=True)
@@ -181,8 +178,11 @@ def strip_fences(text: str) -> str:
     return "\n".join(lines)
 
 
-class LLMError(RuntimeError):
-    """The provider returned no usable completion (refusal, empty response)."""
+class LLMError(ProviderResponseError):
+    """The provider returned no usable completion (refusal, empty response).
+
+    A descriptive subclass of ProviderResponseError, so it is retriable and a
+    Runner classifies it the same way as any other bad model response."""
 
 
 @dataclass(frozen=True)

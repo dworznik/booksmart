@@ -36,6 +36,13 @@ class Book(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
+    # The current parsed-markdown artifact and the parser that produced it,
+    # written by the parse stage and replaced wholesale on every re-parse.
+    # Downstream stages resolve their input from here instead of querying past
+    # runs; NULL until the book has been parsed at least once.
+    parsed_path: Mapped[str | None]
+    parser_used: Mapped[str | None]
+
 
 class Chapter(Base):
     """A detected top-level unit of a book's logical structure. Replaced wholesale
@@ -138,17 +145,25 @@ class KnowledgeObject(Base):
     )
 
 
-class IngestionJob(Base):
-    """One ingestion run for a book. Rows are never deleted; they form the history."""
+class Run(Base):
+    """The record of one pipeline execution over a book (CONTEXT.md: Run).
 
-    __tablename__ = "ingestion_jobs"
+    Runner-owned provenance: its Scope, outcome, version stamps and token
+    spend. Created the moment execution starts — there is no queued state, so
+    status is only ``running`` | ``succeeded`` | ``failed``. Rows are never
+    deleted; they form the history. Stages never see this row."""
+
+    __tablename__ = "runs"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     book_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("books.id"))
     # Which stages this run covers: "full" | "profile" | "extraction" | "embeddings".
     scope: Mapped[str] = mapped_column(default="full", server_default="full")
-    status: Mapped[str] = mapped_column(default="queued")
+    status: Mapped[str] = mapped_column(default="running")
     error: Mapped[str | None] = mapped_column(Text)
+    # The parsed artifact this run produced and the parser it used; set only on
+    # runs whose scope includes the parse stage, NULL on incremental runs that
+    # reused the book's existing parsed markdown.
     output_path: Mapped[str | None]
     parser_used: Mapped[str | None]
     # Stamped when the run executes, so history records exactly what produced it.
@@ -159,8 +174,8 @@ class IngestionJob(Base):
     # scope made no LLM calls.
     input_tokens: Mapped[int | None]
     output_tokens: Mapped[int | None]
+    # created_at is the execution start (there is no queued state before it).
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -5,6 +5,31 @@ detected structure, LLM-extracted knowledge objects, summaries, and embeddings.
 
 ## Language
 
+### Pipeline
+
+**Stage**:
+One unit of the ingestion pipeline (parse, structure, profile, extraction,
+summaries, embeddings). The unit of durability and retry: a completed Stage
+is permanent, and a failed Stage never undoes earlier Stages. Every Stage
+replaces its own output wholesale, so re-running one is safe.
+_Avoid_: step, phase, task
+
+**Scope**:
+The set of Stages a run executes (full, profile, extraction, embeddings).
+Incremental Scopes reuse upstream Stage output.
+
+**Run**:
+The record of one pipeline execution over a book: its Scope, outcome, and
+provenance (models, prompt versions, token spend). Created the moment
+execution starts — there is no queued state. Owned by the Runner; Stages
+never see it.
+_Avoid_: job
+
+**Runner**:
+Whatever executes Stages in order and owns the Run record. Each consumer
+brings its own; Stages and Runs are shared, Runners are not.
+_Avoid_: worker, orchestrator
+
 ### Model providers
 
 **Provider**:

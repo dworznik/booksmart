@@ -11,7 +11,7 @@ from app.config import Settings
 from app.llm import LLMResponse
 from app.models import BookProfile
 from app.profile import PROFILE_SYSTEM_PROMPT
-from app.worker import process_one_job
+from app.runner import execute_run
 
 from .conftest import StubLLMProvider
 from .test_structure_api import ingest, make_structured_pdf_bytes
@@ -113,10 +113,11 @@ class TestProfileGenerationStage:
         book_id = register_book_with_hints(client)
         ingest(client, session_factory, settings, book_id)
 
-        job_id = client.post(f"/books/{book_id}/ingest").json()["id"]
-        assert process_one_job(session_factory, settings.storage_root, llm=ExplodingLLM()) is True
+        run_id = execute_run(
+            session_factory, settings.storage_root, uuid.UUID(book_id), "full", llm=ExplodingLLM()
+        )
 
-        job = client.get(f"/jobs/{job_id}").json()
+        job = client.get(f"/jobs/{run_id}").json()
         assert job["status"] == "failed"
         assert "profile" in str(job["error"])
         assert client.get(f"/books/{book_id}/profile").json()["content"] == (

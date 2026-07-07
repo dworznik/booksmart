@@ -165,12 +165,12 @@ def _never_call_real_llm(
     stub_embedder: StubEmbeddingProvider,
     vector_store: VectorStore,
 ) -> None:
-    """The worker builds real providers when none are injected; tests never do that.
+    """The runner builds real providers when none are injected; tests never do that.
 
     The same instances as the `stub_llm` / `stub_embedder` / `vector_store`
     fixtures are installed, so tests can inspect prompts, embedded texts, and
     stored vectors without passing the stubs explicitly.
     """
-    monkeypatch.setattr("app.worker.build_default_llm", lambda: stub_llm)
-    monkeypatch.setattr("app.worker.build_default_embedder", lambda: stub_embedder)
-    monkeypatch.setattr("app.worker.build_default_vector_store", lambda: vector_store)
+    monkeypatch.setattr("app.runner.build_default_llm", lambda: stub_llm)
+    monkeypatch.setattr("app.runner.build_default_embedder", lambda: stub_embedder)
+    monkeypatch.setattr("app.runner.build_default_vector_store", lambda: vector_store)
