@@ -9,7 +9,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://booksmart:booksmart@localhost:5432/booksmart"
     storage_root: Path = Path("storage")
 
+    # Vector store location. A server URL by default (booksmart-api's shape); set
+    # qdrant_path to run Qdrant embedded on-disk instead (the CLI's default, no
+    # service). When qdrant_path is set it wins and qdrant_url is ignored.
     qdrant_url: str = "http://localhost:6333"
+    qdrant_path: Path | None = None
 
     llm_provider: str = "anthropic"
     llm_model: str | None = None  # None -> the selected provider's default model

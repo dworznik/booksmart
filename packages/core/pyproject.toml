@@ -2,6 +2,7 @@
 name = "booksmart-core"
 version = "0.1.0"
 description = "Booksmart's book-ingestion pipeline: parsing, structure, extraction, summaries, embeddings — as durable Stage functions consumers drive with their own Runner."
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.18.5",
@@ -10,7 +11,9 @@ dependencies = [
     "psycopg[binary]>=3.3.4",
     "pydantic-settings>=2.14.2",
     "pymupdf4llm>=1.28.0",
-    "qdrant-client>=1.18.0",
+    # Minor-pinned: embedded (local-mode) Qdrant's on-disk format follows the
+    # client version, so a wider range could silently break a relocated data dir.
+    "qdrant-client>=1.18.0,<1.19.0",
     "sqlalchemy>=2.0",
 ]
 

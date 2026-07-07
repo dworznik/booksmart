@@ -160,7 +160,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pymupdf4llm", specifier = ">=1.28.0" },
-    { name = "qdrant-client", specifier = ">=1.18.0" },
+    { name = "qdrant-client", specifier = ">=1.18.0,<1.19.0" },
     { name = "sqlalchemy", specifier = ">=2.0" },
 ]
 

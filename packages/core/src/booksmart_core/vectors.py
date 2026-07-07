@@ -19,6 +19,7 @@ from typing import Any
 from qdrant_client import QdrantClient
 from qdrant_client import models as qmodels
 
+from booksmart_core.config import Settings
 from booksmart_core.errors import ProviderConfigError
 
 COLLECTION_NAME = "booksmart"
@@ -98,3 +99,13 @@ class VectorStore:
         else:
             return
         self.client.delete(self.collection, points_selector=qmodels.FilterSelector(filter=stale))
+
+
+def build_vector_store(settings: Settings) -> VectorStore:
+    """Connect to Qdrant the way ``settings`` asks: embedded on-disk when
+    ``qdrant_path`` is set (the CLI's no-service default, where the on-disk
+    format is pinned to the qdrant-client version), else the server at
+    ``qdrant_url`` (booksmart-api's shape)."""
+    if settings.qdrant_path is not None:
+        return VectorStore(QdrantClient(path=str(settings.qdrant_path)))
+    return VectorStore(QdrantClient(url=settings.qdrant_url))

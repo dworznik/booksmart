@@ -25,7 +25,10 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/core/tests"]
+testpaths = ["packages/core/tests", "packages/cli/tests"]
+# The core suite is a `tests` package (relative imports); the CLI suite is a
+# plain directory. importlib mode lets both coexist without an import-path clash.
+addopts = "--import-mode=importlib"
 
 [tool.mypy]
 strict = true

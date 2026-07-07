@@ -11,11 +11,10 @@ call site passing providers explicitly.
 """
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from qdrant_client import QdrantClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -44,7 +43,7 @@ from booksmart_core.stages import (
 )
 from booksmart_core.storage import BookStorage
 from booksmart_core.summaries import SUMMARY_PROMPT_VERSION
-from booksmart_core.vectors import VectorStore
+from booksmart_core.vectors import VectorStore, build_vector_store
 
 # Which Stages each Scope runs. Incremental scopes reuse upstream Stage output;
 # extraction pulls embeddings along because the replaced knowledge objects
@@ -72,8 +71,9 @@ def build_default_embedder() -> EmbeddingProvider:
 
 
 def build_default_vector_store() -> VectorStore:
-    """Test seam, like build_default_llm."""
-    return VectorStore(QdrantClient(url=Settings().qdrant_url))
+    """Test seam, like build_default_llm. Honors qdrant_path (embedded) or
+    qdrant_url (server) from Settings."""
+    return build_vector_store(Settings())
 
 
 def _version_stamps(
@@ -184,10 +184,14 @@ def execute_run(
     llm: LLMProvider | None = None,
     embedder: EmbeddingProvider | None = None,
     vector_store: VectorStore | None = None,
+    on_stage: Callable[[Stage], None] | None = None,
 ) -> uuid.UUID:
     """Run a Scope over a book to completion, recording a Run. Returns the Run
     id; the Run's ``status`` reflects the outcome (this never raises for an
-    expected Stage failure — the failure is recorded on the Run)."""
+    expected Stage failure — the failure is recorded on the Run).
+
+    ``on_stage`` is called with each Stage just before it runs, so a foreground
+    Runner (the CLI) can stream progress; it never affects the outcome."""
     storage = BookStorage(storage_root)
     chain = chain or DEFAULT_CHAIN
     stages = SCOPE_STAGES.get(scope)
@@ -216,6 +220,8 @@ def execute_run(
 
             for stage in stages:
                 current_stage = stage
+                if on_stage is not None:
+                    on_stage(stage)
                 reports.append(
                     _dispatch(
                         stage, session, book_id, chain, storage, llm, embedder, vector_store
