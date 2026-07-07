@@ -1,0 +1,29 @@
+[project]
+name = "booksmart-core"
+version = "0.1.0"
+description = "Booksmart's book-ingestion pipeline: parsing, structure, extraction, summaries, embeddings — as durable Stage functions consumers drive with their own Runner."
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.18.5",
+    "anthropic>=0.116.0",
+    "openai>=2.44.0",
+    "psycopg[binary]>=3.3.4",
+    "pydantic-settings>=2.14.2",
+    "pymupdf4llm>=1.28.0",
+    "qdrant-client>=1.18.0",
+    "sqlalchemy>=2.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# The migration history and alembic.ini live inside src/booksmart_core, so they
+# ship in the wheel (not just the sdist) — a consumer installing core as a wheel
+# runs the same single dialect-neutral history from the package. py.typed rides
+# along the same way.
+[tool.hatch.build.targets.wheel]
+packages = ["src/booksmart_core"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "stubs"]
