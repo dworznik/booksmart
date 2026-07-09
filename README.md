@@ -11,16 +11,20 @@ distributions:
 
 | Package | Import | What it is |
 | --- | --- | --- |
-| [`booksmart-core`](packages/core) | `booksmart_core` | The ingestion pipeline as a typed library: Stage functions a consumer drives with its own Runner. |
-| [`booksmart`](packages/cli) | `booksmart_cli` | The local CLI over core — SQLite and embedded Qdrant, no Docker, no server. |
+| [`booksmart-core`](https://pypi.org/project/booksmart-core/) ([source](packages/core)) | `booksmart_core` | The ingestion pipeline as a typed library: Stage functions a consumer drives with its own Runner. |
+| [`booksmart`](https://pypi.org/project/booksmart/) ([source](packages/cli)) | `booksmart_cli` | The local CLI over core — SQLite and embedded Qdrant, no Docker, no server. |
 
 A third consumer, `booksmart-api` (an Inngest-backed service on Postgres), lives
 in its own repository and builds on `booksmart-core`.
 
 ## Install
 
-Install the CLI — see [`packages/cli/README.md`](packages/cli/README.md) for the
-current instructions, including the pre-release install from source.
+```console
+$ uv tool install booksmart
+$ booksmart add ./clean-code.pdf --title "Clean Code" --author "Robert C. Martin"
+$ booksmart ingest <book-id>
+$ booksmart search all "how do deep modules reduce complexity"
+```
 
 ## Development
 
