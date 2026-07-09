@@ -4,10 +4,11 @@ embedded Qdrant, and a synchronous foreground Runner.
 Everything lives under one home directory (``~/.booksmart`` by default) so the
 whole installation is a single portable data dir — the SQLite file, ``storage/``,
 and the embedded Qdrant directory move together (issue #25's portability, proven
-end to end by the CLI e2e). No Docker, no Postgres, no server.
+end to end by the CLI e2e). No Docker, no Postgres, no server. Settings resolve
+through ``booksmart_cli.config``'s precedence chain (env > config.toml >
+conventional key env vars > home-dir defaults).
 """
 
-import os
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -15,7 +16,6 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from booksmart_core.config import Settings
 from booksmart_core.database import create_engine, upgrade_to_head
 from booksmart_core.llm import (
     EmbeddingProvider,
@@ -28,32 +28,11 @@ from booksmart_core.stages import LLM_STAGES, Stage
 from booksmart_core.storage import BookStorage
 from booksmart_core.vectors import VectorStore, build_vector_store
 
+from booksmart_core.config import Settings
 
-def default_home() -> Path:
-    """The CLI's home directory: ``$BOOKSMART_HOME`` or ``~/.booksmart``."""
-    return Path(os.environ.get("BOOKSMART_HOME") or Path.home() / ".booksmart")
+from booksmart_cli.config import default_home, load_settings
 
-
-def load_settings(home: Path | None = None) -> Settings:
-    """Settings pointed at the local home dir, with env still able to override.
-
-    Only the location fields default to the home dir, and only when the matching
-    ``BOOKSMART_*`` env var is unset — so ``BOOKSMART_DATABASE_URL`` /
-    ``BOOKSMART_STORAGE_ROOT`` still win, and setting ``BOOKSMART_QDRANT_URL``
-    opts out of embedded Qdrant onto a server. Everything else (provider, model,
-    API keys) comes from the environment as usual."""
-    home = home or default_home()
-    home.mkdir(parents=True, exist_ok=True)
-
-    overrides: dict[str, object] = {}
-    if "BOOKSMART_DATABASE_URL" not in os.environ:
-        overrides["database_url"] = f"sqlite:///{home / 'booksmart.db'}"
-    if "BOOKSMART_STORAGE_ROOT" not in os.environ:
-        overrides["storage_root"] = home / "storage"
-    # Embedded Qdrant unless the user pointed us at a server explicitly.
-    if "BOOKSMART_QDRANT_URL" not in os.environ:
-        overrides["qdrant_path"] = home / "qdrant"
-    return Settings(**overrides)  # type: ignore[arg-type]
+__all__ = ["Runtime", "default_home", "load_settings"]
 
 
 def _build_providers(

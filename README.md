@@ -23,6 +23,8 @@ Python 3.12+, with `uv tool install` or `pipx install`:
 
 ```console
 $ uv tool install booksmart        # or: pipx install booksmart
+$ booksmart config set anthropic_api_key   # hidden prompt; persists in ~/.booksmart
+$ booksmart config set openai_api_key      # embeddings
 $ booksmart add ./clean-code.pdf --title "Clean Code" --author "Robert C. Martin"
 $ booksmart ingest <book-id>
 $ booksmart search all "how do deep modules reduce complexity"

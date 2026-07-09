@@ -8,8 +8,9 @@ own Runner (see ADR 0002).
 Core owns the domain: the ORM models, a single dialect-neutral Alembic history
 (SQLite and Postgres), object storage, the provider abstractions (Anthropic /
 OpenAI / Gemini, plus deterministic fakes), and the Qdrant vector store. It reads
-no environment on import — a consumer constructs `Settings` and owns engine and
-session lifecycle.
+no environment at all — a consumer constructs `Settings` explicitly (API keys
+included; since 0.2.0 there is no env-var fallback) and owns engine and session
+lifecycle.
 
 Consumers:
 

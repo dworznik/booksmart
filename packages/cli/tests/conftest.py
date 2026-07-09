@@ -29,8 +29,19 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     monkeypatch.setenv("BOOKSMART_HOME", str(home_dir))
     monkeypatch.setenv("BOOKSMART_LLM_PROVIDER", "fake")
     monkeypatch.setenv("BOOKSMART_EMBEDDING_PROVIDER", "fake")
-    # Make sure no stray server/db config leaks in from the developer's env.
-    for leaked in ("BOOKSMART_DATABASE_URL", "BOOKSMART_STORAGE_ROOT", "BOOKSMART_QDRANT_URL"):
+    # Make sure no stray server/db config or ambient API key (BOOKSMART_-prefixed
+    # or the vendors' conventional variables) leaks in from the developer's env.
+    for leaked in (
+        "BOOKSMART_DATABASE_URL",
+        "BOOKSMART_STORAGE_ROOT",
+        "BOOKSMART_QDRANT_URL",
+        "BOOKSMART_ANTHROPIC_API_KEY",
+        "BOOKSMART_OPENAI_API_KEY",
+        "BOOKSMART_GEMINI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+    ):
         monkeypatch.delenv(leaked, raising=False)
     yield home_dir
 

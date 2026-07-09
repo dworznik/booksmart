@@ -1,11 +1,17 @@
+"""Core configuration.
+
+``Settings`` is a plain model, deliberately: core never reads the process
+environment (or any other ambient source) — the caller constructs the whole
+configuration explicitly. The CLI resolves its env vars and config file into
+one of these; booksmart-api will do its own resolution the same way.
+"""
+
 from pathlib import Path
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="BOOKSMART_")
-
+class Settings(BaseModel):
     database_url: str = "postgresql+psycopg://booksmart:booksmart@localhost:5432/booksmart"
     storage_root: Path = Path("storage")
 
@@ -24,8 +30,8 @@ class Settings(BaseSettings):
     llm_reasoning_effort: str | None = None
     embedding_provider: str = "openai"  # Anthropic has no embeddings API
     embedding_model: str | None = None
-    # API keys; when unset the providers fall back to the conventional
-    # ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY environment variables.
+    # API keys. Required (non-None) by the matching provider at construction;
+    # there is no environment fallback — resolving keys is the caller's job.
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
     gemini_api_key: str | None = None

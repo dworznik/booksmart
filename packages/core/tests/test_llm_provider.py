@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from booksmart_core.config import Settings
+from booksmart_core.errors import MissingAPIKeyError
 from booksmart_core.extraction import EXTRACTION_SYSTEM_PROMPT, parse_extraction_response
 from booksmart_core.fakes import FakeEmbeddingProvider, FakeLLMProvider
 from booksmart_core.profile import PROFILE_SYSTEM_PROMPT
@@ -63,6 +64,32 @@ class TestProviderSelection:
     def test_unknown_provider_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="hal9000"):
             build_llm_provider(make_settings(llm_provider="hal9000"))
+
+    @pytest.mark.parametrize(
+        ("provider", "field"),
+        [
+            ("anthropic", "anthropic_api_key"),
+            ("openai", "openai_api_key"),
+            ("gemini", "gemini_api_key"),
+        ],
+    )
+    def test_missing_key_raises_before_any_call(self, provider: str, field: str) -> None:
+        settings = make_settings(llm_provider=provider, **{field: None})
+
+        with pytest.raises(MissingAPIKeyError, match=field) as excinfo:
+            build_llm_provider(settings)
+
+        assert excinfo.value.field == field
+
+    def test_keys_never_come_from_the_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Core reads Settings and nothing else: even the SDKs' conventional
+        # variables must not leak in (resolving them is the caller's job).
+        monkeypatch.setenv("GEMINI_API_KEY", "sk-ambient")
+
+        with pytest.raises(MissingAPIKeyError):
+            build_llm_provider(make_settings(llm_provider="gemini", gemini_api_key=None))
 
     def test_reasoning_effort_reaches_openai_compatible_providers(self) -> None:
         provider = build_llm_provider(
@@ -135,6 +162,10 @@ class TestEmbeddingProviderSelection:
     def test_unknown_embedding_provider_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="anthropic"):
             build_embedding_provider(make_settings(embedding_provider="anthropic"))
+
+    def test_missing_embedding_key_raises_before_any_call(self) -> None:
+        with pytest.raises(MissingAPIKeyError, match="openai_api_key"):
+            build_embedding_provider(make_settings(openai_api_key=None))
 
 
 class TestOpenAIEmbeddingProvider:
