@@ -15,12 +15,7 @@ no Postgres, no server.
 $ uv tool install booksmart
 ```
 
-`booksmart-core` comes along as a dependency. To run an unreleased commit
-instead:
-
-```console
-$ uv tool install "git+https://github.com/dworznik/booksmart.git#subdirectory=packages/cli"
-```
+`booksmart-core` comes along as a dependency.
 
 ## Quickstart
 
