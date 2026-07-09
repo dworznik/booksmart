@@ -122,7 +122,7 @@ wheels = [
 
 [[package]]
 name = "booksmart"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/cli" }
 dependencies = [
     { name = "booksmart-core" },
@@ -139,7 +139,7 @@ requires-dist = [
 
 [[package]]
 name = "booksmart-core"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "alembic" },

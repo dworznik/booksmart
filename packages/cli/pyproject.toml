@@ -1,6 +1,6 @@
 [project]
 name = "booksmart"
-version = "0.1.0"
+version = "0.1.1"
 description = "Booksmart CLI — a local, single-user front end over booksmart-core (embedded storage, no server)."
 readme = "README.md"
 requires-python = ">=3.12"
