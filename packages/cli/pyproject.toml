@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "Booksmart CLI — a local, single-user front end over booksmart-core (embedded storage, no server)."
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Patryk Dwórznik", email = "patryk@dworznik.com" }]
 dependencies = [
     # Minor-pinned, and deliberately so: the CLI is a thin front end over core's
     # public seams (Stage functions, Runner, VectorStore), and pre-1.0 a minor

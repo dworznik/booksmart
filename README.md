@@ -38,3 +38,7 @@ The core suite also runs against Postgres in CI; point
 `CONTEXT.md` holds the vocabulary (Stage, Scope, Run, Runner). The load-bearing
 decisions are recorded as ADRs in [`docs/adr/`](docs/adr): stages are the unit of
 durability, and the vector collection is locked to one embedding model.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE), or <https://dworznik.mit-license.org>.
