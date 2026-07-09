@@ -5,7 +5,7 @@ A Runner owns engine/session lifecycle (core exposes only Stage functions over a
 ``Session``). These helpers give a consumer — the CLI, or any embedded user — a
 correct SQLite engine (foreign keys enforced, so the stages' ON DELETE CASCADE
 works) and a one-call migration to head against the single packaged history.
-booksmart-api runs Postgres and manages its own engine, so it needs neither.
+A server consumer running Postgres manages its own engine, so it needs neither.
 """
 
 from sqlalchemy import Engine, event

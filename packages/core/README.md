@@ -16,8 +16,6 @@ Consumers:
 
 - [`booksmart`](https://pypi.org/project/booksmart/) — the local CLI (SQLite,
   embedded Qdrant).
-- `booksmart-api` — an Inngest-backed service (Postgres) that wraps each Stage in
-  a durable step.
 
 ```python
 from booksmart_core.database import create_engine, upgrade_to_head
@@ -31,8 +29,8 @@ run_id = execute_run(session_factory, storage_root, book_id, "full")
 
 `booksmart_core.search.search` is the read side of the embedding pipeline, and
 the single seam every consumer's search surface sits on — the CLI's `search`
-command and booksmart-api's HTTP endpoint call it with the same arguments,
-against embedded and served Qdrant respectively.
+command calls it against embedded Qdrant; a server consumer would call it with
+the same arguments against a served instance.
 
 ```python
 from booksmart_core.search import search

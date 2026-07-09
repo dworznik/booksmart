@@ -1,12 +1,12 @@
 # Preference Snapshot: rebuild Settings from a FULL model_dump
 
-Not a removed unit — a footnote for `booksmart-api`, recorded here so it isn't
+Not a removed unit — a footnote for a future server consumer, recorded here so it isn't
 rediscovered painfully. See CONTEXT.md's *Preference Snapshot* term.
 
 A durable run must behave consistently across steps even if config or a deploy
 changes mid-run. So the Runner resolves `Settings` **once** when the run is
 triggered and carries that snapshot to every step, rather than reconstructing
-`Settings()` inside each Inngest step (which reads live env).
+`Settings()` inside each durable step.
 
 The trap: `pydantic-settings` fills any field you omit from the **live
 environment**. So a snapshot must serialize the *entire* settings object and

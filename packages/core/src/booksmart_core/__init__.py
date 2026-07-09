@@ -1,7 +1,7 @@
 """booksmart-core: the book-ingestion pipeline as a library.
 
 The alembic history and its config ship inside the package (not just the sdist)
-so any consumer installing core as a wheel — the CLI, booksmart-api — can locate
+so any consumer installing core as a wheel — the CLI, a server — can locate
 and run the single migration history from the installed location.
 """
 

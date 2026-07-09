@@ -3,8 +3,8 @@
 A Runner walks a Scope's Stages in order, owns the Run record (Stages never
 touch it), and maps Stage failures to an outcome. This one runs the whole Scope
 synchronously in the foreground on a single session — the shape the CLI will
-use. booksmart-api brings a different Runner (each Stage wrapped in an Inngest
-step); both drive the same public ``run_<stage>`` functions.
+use. A server consumer can bring a different Runner (each Stage wrapped in a
+durable step); both drive the same public ``run_<stage>`` functions.
 
 The build_default_* seams exist so tests can substitute stubs without every
 call site passing providers explicitly.
@@ -122,7 +122,7 @@ def finalize_run(
     version stamps, summed token spend, and finish time. Token totals stay NULL
     unless ``count_tokens`` (the scope made LLM calls), so "no LLM work" reads
     differently from "LLM work that reported zero". A core helper so any Runner
-    — this one, or booksmart-api's Inngest Runner — finalizes a Run the same way
+    — this one, or a durable-execution Runner — finalizes a Run the same way
     across process boundaries. Commits."""
     run.status = status
     run.error = error

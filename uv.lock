@@ -141,7 +141,7 @@ requires-dist = [
 
 [[package]]
 name = "booksmart-core"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "alembic" },

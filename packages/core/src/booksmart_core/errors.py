@@ -2,8 +2,8 @@
 
 Every error the pipeline raises on purpose carries a class-level ``retriable``
 flag so a Runner can map it to its own retry semantics without parsing message
-strings: booksmart-api turns ``retriable=False`` into Inngest's
-``NonRetriableError``; the CLI renders one clean line. Vendor SDK exceptions
+strings: a durable-execution Runner maps ``retriable=False`` to its runtime's
+non-retriable error; the CLI renders one clean line. Vendor SDK exceptions
 (anthropic/openai/qdrant network errors and the like) are *not* wrapped — they
 pass through untouched, and a Runner treats an unrecognised exception as it
 sees fit.

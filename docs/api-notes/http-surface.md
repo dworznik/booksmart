@@ -1,6 +1,6 @@
 # HTTP surface (removed)
 
-The full REST surface `booksmart-api` should recreate on top of `booksmart-core`.
+The full REST surface a server consumer would recreate on top of `booksmart-core`.
 Status codes and semantics below are the ones the FastAPI app served at
 [`589857c`](https://github.com/dworznik/booksmart/tree/589857c/app).
 
@@ -13,7 +13,7 @@ Status codes and semantics below are the ones the FastAPI app served at
 onto `app.state`, and `get_db` yielded a request-scoped `Session`. In core this
 is now the consumer's job: core exposes `Settings`, the ORM models, `BookStorage`,
 and `execute_run(session_factory, storage_root, book_id, scope)` — a Runner owns
-session and engine lifecycle. Under Inngest each step opens its own session
+session and engine lifecycle. Under a durable runtime each step opens its own session
 (proven by `tests/test_stage_contract.py`), so there is no single app-scoped
 session to model.
 
@@ -48,14 +48,14 @@ stored the original with a rollback-on-DB-failure guard. Both are documented in
 | GET | `/books/{id}/jobs` | `200` history oldest-first | `404` unknown book |
 | GET | `/jobs/{id}` | `200` `RunOut` | `404` |
 
-**202 trigger flow (the shape for Inngest).** Originally the endpoint enqueued a
+**202 trigger flow (the shape for a durable runtime).** Originally the endpoint enqueued a
 `queued` job and a polling worker claimed it — an async accept. ADR 0002 removed
 the queued state, so post-#23 the endpoint ran the pipeline synchronously.
-`booksmart-api` restores the async accept differently: the HTTP handler sends an
-Inngest event and returns `202` with the run id immediately; the Inngest function
-opens the run (`start_run`), wraps each stage in a `step.run`, and closes it
-(`finalize_run`). Map `BooksmartError.retriable == False` to Inngest's
-`NonRetriableError`.
+A server restores the async accept differently: the HTTP handler emits an event
+and returns `202` with the run id immediately; the durable function opens the run
+(`start_run`), wraps each stage in a durable step, and closes it
+(`finalize_run`). Map `BooksmartError.retriable == False` to the runtime's
+non-retriable error.
 
 **Reprocess guards live in the consumer now.** The `409` prior-success check was
 `has_successful_run(session, book_id)` (still in `booksmart_core.runner`); the

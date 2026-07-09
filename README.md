@@ -14,9 +14,6 @@ distributions:
 | [`booksmart-core`](https://pypi.org/project/booksmart-core/) ([source](packages/core)) | `booksmart_core` | The ingestion pipeline as a typed library: Stage functions a consumer drives with its own Runner. |
 | [`booksmart`](https://pypi.org/project/booksmart/) ([source](packages/cli)) | `booksmart_cli` | The local CLI over core — SQLite and embedded Qdrant, no Docker, no server. |
 
-A third consumer, `booksmart-api` (an Inngest-backed service on Postgres), lives
-in its own repository and builds on `booksmart-core`.
-
 ## Install
 
 Python 3.12+, with `uv tool install` or `pipx install`:

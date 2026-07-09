@@ -3,8 +3,8 @@
 When `booksmart-core` became a library (issue #24), the FastAPI server was
 removed: the app factory, the three routers, the Pydantic schemas, and the
 request-scoped DB dependency. None of that is data-processing — it is HTTP
-plumbing a *consumer* owns. `booksmart-api` (the new Inngest-backed service)
-will re-implement the surface it wants on top of core; the CLI implements its
+plumbing a *consumer* owns. A future server consumer can re-implement the
+surface it wants on top of core; the CLI implements its
 own thin front end.
 
 This directory is the value assessment the split agreed to leave behind: for

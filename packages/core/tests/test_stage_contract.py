@@ -1,9 +1,9 @@
-"""The Stage contract (ADR 0002), proven without Inngest.
+"""The Stage contract (ADR 0002), proven without a durable-execution runtime.
 
 Stages are public synchronous functions that take serializable inputs (a
 book_id), resolve their own data, commit their own output, and never touch a
-Run row. The load-bearing test drives them the way booksmart-api's Inngest
-Runner will: a *fresh session per stage*, with only the book_id carried between
+Run row. The load-bearing test drives them the way a durable step-based
+Runner would: a *fresh session per stage*, with only the book_id carried between
 stages, and the Run managed on its own separate session — then shows the result
 is identical to the in-repo sequential Runner.
 """
@@ -49,7 +49,7 @@ def _drive_per_stage_session(
     stub_embedder: StubEmbeddingProvider,
     vector_store: VectorStore,
 ) -> list[object]:
-    """Run the full pipeline as an Inngest-shaped Runner would: one fresh
+    """Run the full pipeline as a durable-execution Runner would: one fresh
     session per stage, only the serializable book_id crossing the boundary."""
     storage = BookStorage(settings.storage_root)
     chain = build_default_chain()
@@ -85,7 +85,7 @@ class TestPerStageSessionContract:
         prime_extraction(stub_llm)
         prime_summaries(stub_llm)
 
-        # A Run opened on its own session (as an Inngest step would), never
+        # A Run opened on its own session (as a durable step would), never
         # passed into a stage.
         with session_factory() as session:
             run = start_run(session, book_id, "full")

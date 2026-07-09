@@ -9,7 +9,7 @@ embedded by one model and compared against another model's vectors returns
 plausible, silently wrong rankings — the failure has no symptom an operator can
 diagnose, so it is refused rather than served.
 
-This is the seam booksmart-api's HTTP search endpoint reuses: it takes a session
+This is the seam a server's HTTP search endpoint would reuse: it takes a session
 and an already-built vector store and embedder, and returns detached rows.
 """
 

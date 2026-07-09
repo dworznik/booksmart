@@ -3,7 +3,7 @@
 ``Settings`` is a plain model, deliberately: core never reads the process
 environment (or any other ambient source) — the caller constructs the whole
 configuration explicitly. The CLI resolves its env vars and config file into
-one of these; booksmart-api will do its own resolution the same way.
+one of these; any other consumer does its own resolution the same way.
 """
 
 from pathlib import Path
@@ -15,7 +15,7 @@ class Settings(BaseModel):
     database_url: str = "postgresql+psycopg://booksmart:booksmart@localhost:5432/booksmart"
     storage_root: Path = Path("storage")
 
-    # Vector store location. A server URL by default (booksmart-api's shape); set
+    # Vector store location. A server URL by default (a service's shape); set
     # qdrant_path to run Qdrant embedded on-disk instead (the CLI's default, no
     # service). When qdrant_path is set it wins and qdrant_url is ignored.
     qdrant_url: str = "http://localhost:6333"

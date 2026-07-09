@@ -5,7 +5,7 @@ The suite is dialect-neutral and runs against whichever database
 SQLite file (the CLI's dialect and the local/default CI path); CI also runs the
 whole suite a second time against a Postgres service container, so a Postgres-ism
 cannot land silently. A dedicated database is migrated once per session with the
-same single Alembic history a consumer (CLI, booksmart-api) uses.
+same single Alembic history any consumer uses.
 
 The HTTP server is gone (booksmart-core is a library now), so tests drive the
 pipeline through the public Runner / Stage functions and read results straight
@@ -80,7 +80,7 @@ def database_url(tmp_path_factory: pytest.TempPathFactory) -> str:
         _ensure_postgres_database(url)
 
     # Resolve the migration history from the installed package — the same path a
-    # consumer (CLI, booksmart-api) uses — rather than a source-tree layout.
+    # consumer (CLI or server) uses — rather than a source-tree layout.
     alembic_cfg = AlembicConfig()
     alembic_cfg.set_main_option("script_location", str(MIGRATIONS_PATH))
     alembic_cfg.set_main_option("sqlalchemy.url", url)

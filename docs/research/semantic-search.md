@@ -357,7 +357,7 @@ Where each responsibility lives:
 
 This composes cleanly for all three consumers: the CLI opens a session and builds
 `vector_store`/`embedder` from `Settings` (it already has the builders) and calls
-`search`; booksmart-api does the same inside a request handler and serialises
+`search`; a server consumer does the same inside a request handler and serialises
 `list[SearchHit]` to JSON. Neither needs a Runner — search is not a Stage (no
 durability, no Run record), so ADR 0002's stage machinery does not apply; it is
 just a read function that happens to touch the vector store.
@@ -415,7 +415,7 @@ just a read function that happens to touch the vector store.
 5. **Score exposure** — whether to surface the raw cosine score to users, apply a
    default `score_threshold`, or leave both to the caller. Recommend: no default
    threshold, expose the score, let the CLI decide presentation.
-6. **Server-mode note** — booksmart-api runs against a Qdrant *server*
+6. **Server-mode note** — a server consumer runs against a Qdrant *server*
    (`qdrant_url`), where search is HNSW/approximate; results may differ slightly
    from the CLI's exact local scan. Not a correctness issue, but worth a test that
    both paths return the same top hit for a fixed fixture.
