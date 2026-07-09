@@ -13,8 +13,8 @@ session lifecycle.
 
 Consumers:
 
-- [`booksmart`](https://pypi.org/project/booksmart/) — the local CLI (SQLite,
-  embedded Qdrant).
+- [`booksmart`](https://github.com/dworznik/booksmart/tree/main/packages/cli) —
+  the local CLI (SQLite, embedded Qdrant).
 - `booksmart-api` — an Inngest-backed service (Postgres) that wraps each Stage in
   a durable step.
 
@@ -25,3 +25,20 @@ from booksmart_core.runner import execute_run
 upgrade_to_head(url)
 run_id = execute_run(session_factory, storage_root, book_id, "full")
 ```
+
+## Search
+
+`booksmart_core.search.search` is the read side of the embedding pipeline, and
+the single seam every consumer's search surface sits on — the CLI's `search`
+command and booksmart-api's HTTP endpoint call it with the same arguments,
+against embedded and served Qdrant respectively.
+
+```python
+from booksmart_core.search import search
+
+hits = search(session, vector_store, embedder, "how do deep modules help?", limit=5)
+```
+
+It embeds the query with the collection's locked model (refusing a mismatch, ADR
+0001), ANN-searches Qdrant, and resolves each hit back to its detached ORM row.
+

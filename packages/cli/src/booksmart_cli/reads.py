@@ -7,13 +7,24 @@ session closes), so command code can render without holding a session open.
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from booksmart_core.extraction import KNOWLEDGE_OBJECT_TYPES
+from booksmart_core.llm import build_embedding_provider
 from booksmart_core.models import Book, BookProfile, Chapter, KnowledgeObject, Run
+from booksmart_core.search import SearchHit
+from booksmart_core.search import search as core_search
+from booksmart_core.vectors import (
+    RECORD_TYPES,
+    RecordType,
+    build_vector_store,
+    unknown_record_types,
+)
 
 from booksmart_cli.errors import (
     BookNotFoundError,
@@ -150,3 +161,54 @@ def get_knowledge(runtime: Runtime, object_id: uuid.UUID) -> KnowledgeObject:
             raise KnowledgeNotFoundError(f"No knowledge object with id {object_id}")
         session.expunge(obj)
     return obj
+
+
+def semantic_search(
+    runtime: Runtime,
+    query: str,
+    *,
+    book_id: uuid.UUID | None = None,
+    record_types: Sequence[str] | None = None,
+    limit: int = 10,
+    score_threshold: float | None = None,
+) -> list[SearchHit]:
+    """Rank embedded records against a natural-language query (no HTTP ancestor —
+    this is the first post-split feature, issue #30).
+
+    Validates the user's input before building any provider, so a typo'd book id
+    or record type never demands an embedding API key. The embedded Qdrant client
+    is closed on the way out: it holds a single-process lock on the on-disk
+    directory, and the next command has to be able to open it."""
+    if not query.strip():
+        raise CliError("Search query must not be empty")
+    if limit < 1:
+        raise CliError(f"--limit must be at least 1, got {limit}")
+    unknown = unknown_record_types(record_types or ())
+    if unknown:
+        raise CliError(
+            f"Unknown record type {', '.join(repr(name) for name in unknown)}; "
+            f"expected one of {', '.join(RECORD_TYPES)}"
+        )
+    if book_id is not None:
+        with runtime.session_factory() as session:
+            _require_book(session, book_id)
+
+    embedder = build_embedding_provider(runtime.settings)
+    vector_store = build_vector_store(runtime.settings)
+    try:
+        with runtime.session_factory() as session:
+            return core_search(
+                session,
+                vector_store,
+                embedder,
+                query,
+                book_id=book_id,
+                # Validated against RECORD_TYPES above.
+                record_types=(
+                    cast("list[RecordType]", list(record_types)) if record_types else None
+                ),
+                limit=limit,
+                score_threshold=score_threshold,
+            )
+    finally:
+        vector_store.close()
