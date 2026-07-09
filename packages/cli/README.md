@@ -3,33 +3,25 @@
 The Booksmart CLI — turn books into queryable knowledge, locally.
 
 A single-user front end over
-[`booksmart-core`](https://github.com/dworznik/booksmart/tree/main/packages/core):
-register PDFs/EPUBs, ingest them through the parsing → structure → profile →
-extraction → summaries → embeddings pipeline, and browse the results. Everything
-runs against an auto-migrated SQLite file and embedded Qdrant under
-`~/.booksmart/` — no Docker, no Postgres, no server.
+[`booksmart-core`](https://pypi.org/project/booksmart-core/): register PDFs/EPUBs,
+ingest them through the parsing → structure → profile → extraction → summaries →
+embeddings pipeline, and browse the results. Everything runs against an
+auto-migrated SQLite file and embedded Qdrant under `~/.booksmart/` — no Docker,
+no Postgres, no server.
 
 ## Install
 
-**Not published to PyPI yet** — install from the repo, which is private, so this
-needs an SSH key with access to it. `uv` clones the repo, resolves
-`booksmart-core` from the same checkout, and puts a `booksmart` command on your
-PATH:
+Needs Python 3.12 or newer. `booksmart` is a command-line tool, so install it
+into its own environment rather than into a project's:
 
 ```console
-$ uv tool install "git+ssh://git@github.com/dworznik/booksmart.git#subdirectory=packages/cli"
+$ uv tool install booksmart
+$ pipx install booksmart
 ```
 
-Over HTTPS instead, with `gh auth login` (or a `repo`-scoped token) supplying git
-credentials:
-
-```console
-$ uv tool install "git+https://github.com/dworznik/booksmart.git#subdirectory=packages/cli"
-```
-
-Re-run with `--force` to pick up new commits. Once the first `cli-v*` tag ships,
-this becomes `uv tool install booksmart`, which pulls `booksmart-core` down as a
-dependency.
+Either puts a `booksmart` command on your PATH. Plain `pip install booksmart`
+also works if you would rather have it in the current environment.
+`booksmart-core` comes along as a dependency in every case.
 
 ## Quickstart
 
