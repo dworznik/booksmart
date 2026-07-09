@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "Booksmart's book-ingestion pipeline: parsing, structure, extraction, summaries, embeddings — as durable Stage functions consumers drive with their own Runner."
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Patryk Dwórznik", email = "patryk@dworznik.com" }]
 dependencies = [
     "alembic>=1.18.5",
     "anthropic>=0.116.0",
