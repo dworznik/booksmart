@@ -25,7 +25,13 @@ also works if you would rather have it in the current environment.
 
 ## Quickstart
 
+`ingest` calls an LLM and an embedding provider, so it needs credentials —
+an Anthropic key (LLM) and an OpenAI key (embeddings) by default. Set them
+once; they persist in `~/.booksmart/config.toml`:
+
 ```console
+$ booksmart config set anthropic_api_key   # hidden prompt, or pipe the key in
+$ booksmart config set openai_api_key
 $ booksmart add ./clean-code.pdf --title "Clean Code" --author "Robert C. Martin"
 $ booksmart ingest <book-id>
 $ booksmart structure <book-id>
@@ -33,9 +39,8 @@ $ booksmart knowledge list <book-id>
 $ booksmart search all "how do deep modules reduce complexity"
 ```
 
-`ingest` calls an LLM and an embedding provider, so it needs credentials —
-`ANTHROPIC_API_KEY` and `OPENAI_API_KEY` by default. To drive the whole pipeline
-with no keys, no network and no cost, select the deterministic fake providers:
+To drive the whole pipeline with no keys, no network and no cost, select the
+deterministic fake providers:
 
 ```console
 $ BOOKSMART_LLM_PROVIDER=fake BOOKSMART_EMBEDDING_PROVIDER=fake booksmart ingest <book-id>
@@ -44,7 +49,7 @@ $ BOOKSMART_LLM_PROVIDER=fake BOOKSMART_EMBEDDING_PROVIDER=fake booksmart ingest
 ## Commands
 
 `add`, `ingest`, `books list/show/update`, `runs list/show`, `structure`,
-`profile`, `knowledge list/show`, `search`.
+`profile`, `knowledge list/show`, `search`, `config set/get/unset/list`.
 
 ### Search
 
@@ -60,6 +65,21 @@ return plausible, silently wrong rankings (ADR 0001).
 
 ## Configuration
 
-Providers and locations come from `BOOKSMART_*` environment variables (e.g.
-`BOOKSMART_LLM_PROVIDER`, `BOOKSMART_HOME`). Set `BOOKSMART_QDRANT_URL` to use a
-Qdrant server instead of the embedded on-disk store.
+Any setting — provider, model, API keys, locations — can be persisted with
+`booksmart config set <field> [value]` (omit the value to enter it via hidden
+prompt or piped stdin, keeping keys out of shell history). Values live in
+`~/.booksmart/config.toml`, created `0600` and safe to hand-edit.
+
+Each setting resolves through one chain, highest first:
+
+1. `BOOKSMART_*` environment variables (e.g. `BOOKSMART_LLM_PROVIDER`) —
+   explicit targeting for scripts and one-offs.
+2. `config.toml` — what `config set` writes.
+3. The vendors' conventional variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+   `GEMINI_API_KEY`) — API keys only, so an already-exported key just works.
+4. Defaults (SQLite, `storage/` and embedded Qdrant under `~/.booksmart`).
+
+`booksmart config list` shows every field's effective value and which layer it
+came from. Set `BOOKSMART_QDRANT_URL` (or `config set qdrant_url ...`) to use a
+Qdrant server instead of the embedded on-disk store; `BOOKSMART_HOME` moves the
+whole installation.

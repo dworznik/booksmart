@@ -10,7 +10,8 @@ sees fit.
 
 Non-retriable:
 - ``ProviderConfigError`` — a Preference conflicts with a Limit, or the
-  configuration is otherwise deterministically wrong.
+  configuration is otherwise deterministically wrong (``MissingAPIKeyError``
+  is its construction-time case of a key absent from ``Settings``).
 - ``StagePreconditionError`` — the data a stage needs is absent (missing book
   or parsed artifact, unknown scope). Retrying the same call cannot fix it.
 
@@ -41,6 +42,20 @@ class ProviderConfigError(BooksmartError, ValueError):
     """
 
     retriable = False
+
+
+class MissingAPIKeyError(ProviderConfigError):
+    """The selected provider needs an API key that ``Settings`` does not carry.
+
+    Raised at provider construction, before any run exists. ``field`` is the
+    ``Settings`` field name (e.g. ``anthropic_api_key``) so a front end can
+    point at its own remedy (the CLI suggests ``booksmart config set <field>``).
+    """
+
+    def __init__(self, provider: str, field: str) -> None:
+        super().__init__(f"{provider} API key is not set ({field})")
+        self.provider = provider
+        self.field = field
 
 
 class StagePreconditionError(BooksmartError):

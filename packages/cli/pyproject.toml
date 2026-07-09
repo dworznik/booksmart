@@ -1,6 +1,6 @@
 [project]
 name = "booksmart"
-version = "0.1.1"
+version = "0.2.0"
 description = "Booksmart CLI — a local, single-user front end over booksmart-core (embedded storage, no server)."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,9 +14,12 @@ dependencies = [
     # this for local workspace development — the published wheel carries this
     # constraint, so an unbounded requirement would let a future core install
     # against a CLI that cannot drive it.
-    "booksmart-core>=0.1.0,<0.2.0",
+    "booksmart-core>=0.2.0,<0.3.0",
     "typer>=0.12.0",
     "rich>=13.7.0",
+    # Round-trip TOML for ~/.booksmart/config.toml: users hand-edit that file,
+    # so `config set` must preserve their comments and formatting.
+    "tomlkit>=0.13.0",
 ]
 
 [project.scripts]

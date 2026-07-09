@@ -6,22 +6,20 @@ an auto-migrated SQLite file and embedded Qdrant — no Docker, no Postgres, no
 server. Every command but ``search`` mirrors the removed HTTP surface exactly
 (docs/api-notes/); ``search`` is the first post-split feature (issue #30)."""
 
-import functools
 import uuid
-from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Optional, TypeVar
+from typing import Annotated, Optional
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from booksmart_core.errors import BooksmartError
 from booksmart_core.models import Book, KnowledgeObject, Run
 from booksmart_core.runner import SCOPE_STAGES, has_successful_run
 
 from booksmart_cli import reads, registration
-from booksmart_cli.errors import CliError
+from booksmart_cli.config import config_app
+from booksmart_cli.errors import CliError, handle_errors, render_error
 from booksmart_cli.runtime import Runtime
 
 app = typer.Typer(
@@ -35,32 +33,9 @@ knowledge_app = typer.Typer(help="Browse extracted knowledge objects.", no_args_
 app.add_typer(books_app, name="books")
 app.add_typer(runs_app, name="runs")
 app.add_typer(knowledge_app, name="knowledge")
+app.add_typer(config_app, name="config")
 
 console = Console()
-
-F = TypeVar("F", bound=Callable[..., object])
-
-
-def _error(message: str) -> None:
-    """One red error line to stderr, via click's stream (captured in tests)."""
-    typer.secho(f"error: {message}", fg=typer.colors.RED, err=True)
-
-
-def _handle_errors(fn: F) -> F:
-    """Render expected failures (bad input, pipeline errors) as one clean line
-    and exit non-zero, instead of dumping a traceback. The pipeline's own
-    BooksmartError carries retriability for API consumers; the CLI stays human
-    and shows only the message."""
-
-    @functools.wraps(fn)
-    def wrapper(*args: object, **kwargs: object) -> object:
-        try:
-            return fn(*args, **kwargs)
-        except (CliError, BooksmartError) as exc:
-            _error(str(exc))
-            raise typer.Exit(1) from exc
-
-    return wrapper  # type: ignore[return-value]
 
 
 def _parse_uuid(value: str) -> uuid.UUID:
@@ -74,7 +49,7 @@ def _parse_uuid(value: str) -> uuid.UUID:
 
 
 @app.command()
-@_handle_errors
+@handle_errors
 def add(
     file: Annotated[Path, typer.Argument(help="Path to a .pdf or .epub file.")],
     title: Annotated[str, typer.Option(help="Book title (required).")],
@@ -112,7 +87,7 @@ def add(
 
 
 @app.command()
-@_handle_errors
+@handle_errors
 def ingest(
     book: Annotated[str, typer.Argument(help="Book id.")],
     scope: Annotated[
@@ -144,7 +119,7 @@ def ingest(
     if run.status == "succeeded":
         console.print(f"[green]✓[/green] run [cyan]{run.id}[/cyan] succeeded")
     else:
-        _error(f"run {run.id} failed: {run.error}")
+        render_error(f"run {run.id} failed: {run.error}")
         raise typer.Exit(1)
 
 
@@ -157,7 +132,7 @@ def _has_prior_success(runtime: Runtime, book_id: uuid.UUID) -> bool:
 
 
 @books_app.command("list")
-@_handle_errors
+@handle_errors
 def books_list() -> None:
     """List every registered book, oldest first."""
     runtime = Runtime.load()
@@ -172,7 +147,7 @@ def books_list() -> None:
 
 
 @books_app.command("show")
-@_handle_errors
+@handle_errors
 def books_show(book: Annotated[str, typer.Argument(help="Book id.")]) -> None:
     """Show one book's full metadata."""
     runtime = Runtime.load()
@@ -180,7 +155,7 @@ def books_show(book: Annotated[str, typer.Argument(help="Book id.")]) -> None:
 
 
 @books_app.command("update")
-@_handle_errors
+@handle_errors
 def books_update(
     book: Annotated[str, typer.Argument(help="Book id.")],
     title: Annotated[Optional[str], typer.Option()] = None,
@@ -263,7 +238,7 @@ def _print_book_detail(book: Book) -> None:
 
 
 @runs_app.command("list")
-@_handle_errors
+@handle_errors
 def runs_list(book: Annotated[str, typer.Argument(help="Book id.")]) -> None:
     """A book's run history, oldest first (failures included)."""
     runtime = Runtime.load()
@@ -278,7 +253,7 @@ def runs_list(book: Annotated[str, typer.Argument(help="Book id.")]) -> None:
 
 
 @runs_app.command("show")
-@_handle_errors
+@handle_errors
 def runs_show(run: Annotated[str, typer.Argument(help="Run id.")]) -> None:
     """Show one run's outcome, versions, and token spend."""
     runtime = Runtime.load()
@@ -316,7 +291,7 @@ def _when(run: Run) -> str:
 
 
 @app.command()
-@_handle_errors
+@handle_errors
 def structure(book: Annotated[str, typer.Argument(help="Book id.")]) -> None:
     """Show a book's detected chapter/section tree."""
     runtime = Runtime.load()
@@ -332,7 +307,7 @@ def structure(book: Annotated[str, typer.Argument(help="Book id.")]) -> None:
 
 
 @app.command()
-@_handle_errors
+@handle_errors
 def profile(book: Annotated[str, typer.Argument(help="Book id.")]) -> None:
     """Show a book's latest generated profile."""
     runtime = Runtime.load()
@@ -347,7 +322,7 @@ def profile(book: Annotated[str, typer.Argument(help="Book id.")]) -> None:
 
 
 @knowledge_app.command("list")
-@_handle_errors
+@handle_errors
 def knowledge_list(
     book: Annotated[str, typer.Argument(help="Book id.")],
     type: Annotated[Optional[str], typer.Option(help="Filter by knowledge type.")] = None,
@@ -365,7 +340,7 @@ def knowledge_list(
 
 
 @knowledge_app.command("show")
-@_handle_errors
+@handle_errors
 def knowledge_show(
     object_id: Annotated[str, typer.Argument(help="Knowledge object id.")],
 ) -> None:
@@ -380,7 +355,7 @@ SEARCH_SCOPE_ALL = "all"
 
 
 @app.command()
-@_handle_errors
+@handle_errors
 def search(
     scope: Annotated[
         str, typer.Argument(help="Book id to search within, or `all` for every book.")

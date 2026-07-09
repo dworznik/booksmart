@@ -1,10 +1,11 @@
 """Configurable LLM provider layer.
 
-Providers are selected by configuration (BOOKSMART_LLM_PROVIDER /
-BOOKSMART_LLM_MODEL), never hardcoded, so ingestion stages that need a model
-(profile generation, knowledge extraction, embeddings) all share one seam.
-API keys come from settings or fall back to the SDKs' standard environment
-variables (ANTHROPIC_API_KEY, OPENAI_API_KEY).
+Providers are selected by ``Settings`` (llm_provider / llm_model), never
+hardcoded, so ingestion stages that need a model (profile generation, knowledge
+extraction, embeddings) all share one seam. API keys come from ``Settings``
+alone — there is no environment fallback; ``build_llm_provider`` /
+``build_embedding_provider`` raise ``MissingAPIKeyError`` when the selected
+provider's key is absent.
 
 Vendor API facts live here too (see CONTEXT.md): a Limit is a
 provider-declared API fact resolved per (vendor, model) at construction and
@@ -16,7 +17,6 @@ scarier name.
 """
 
 import logging
-import os
 from dataclasses import dataclass
 from typing import ClassVar, Protocol, TypeVar
 
@@ -28,7 +28,11 @@ from booksmart_core.config import Settings
 
 # ProviderConfigError is defined in booksmart_core.errors now; re-exported here because
 # provider construction (and booksmart_core.vectors) has always raised it from this seam.
-from booksmart_core.errors import ProviderConfigError, ProviderResponseError
+from booksmart_core.errors import (
+    MissingAPIKeyError,
+    ProviderConfigError,
+    ProviderResponseError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -287,12 +291,6 @@ class OpenAIProvider:
         )
 
 
-def _resolve_gemini_key(api_key: str | None) -> str | None:
-    # The OpenAI SDK only knows OPENAI_API_KEY, so resolve Gemini's own
-    # conventional variable here instead of leaving it to the SDK.
-    return api_key or os.environ.get("GEMINI_API_KEY")
-
-
 class GeminiProvider(OpenAIProvider):
     _vendor: ClassVar[str] = "gemini"
     _llm_limits: ClassVar[dict[str, LLMLimits]] = _GEMINI_LLM_LIMITS
@@ -307,7 +305,7 @@ class GeminiProvider(OpenAIProvider):
     ) -> None:
         super().__init__(
             model,
-            api_key=_resolve_gemini_key(api_key),
+            api_key=api_key,
             base_url=GEMINI_BASE_URL,
             client=client,
             reasoning_effort=reasoning_effort,
@@ -359,10 +357,27 @@ class GeminiEmbeddingProvider(OpenAIEmbeddingProvider):
     ) -> None:
         super().__init__(
             model,
-            api_key=_resolve_gemini_key(api_key),
+            api_key=api_key,
             base_url=GEMINI_BASE_URL,
             client=client,
         )
+
+
+# Which Settings field holds each vendor's key, and the vendor's display name
+# for MissingAPIKeyError messages.
+_KEY_FIELDS = {
+    "anthropic": ("Anthropic", "anthropic_api_key"),
+    "openai": ("OpenAI", "openai_api_key"),
+    "gemini": ("Gemini", "gemini_api_key"),
+}
+
+
+def _require_key(settings: Settings, vendor: str) -> str:
+    display_name, field = _KEY_FIELDS[vendor]
+    key: str | None = getattr(settings, field)
+    if key is None:
+        raise MissingAPIKeyError(display_name, field)
+    return key
 
 
 def build_embedding_provider(settings: Settings) -> EmbeddingProvider:
@@ -378,8 +393,8 @@ def build_embedding_provider(settings: Settings) -> EmbeddingProvider:
 
         return FakeEmbeddingProvider(model=model)
     if settings.embedding_provider == "gemini":
-        return GeminiEmbeddingProvider(model=model, api_key=settings.gemini_api_key)
-    return OpenAIEmbeddingProvider(model=model, api_key=settings.openai_api_key)
+        return GeminiEmbeddingProvider(model=model, api_key=_require_key(settings, "gemini"))
+    return OpenAIEmbeddingProvider(model=model, api_key=_require_key(settings, "openai"))
 
 
 def build_llm_provider(settings: Settings) -> LLMProvider:
@@ -396,15 +411,15 @@ def build_llm_provider(settings: Settings) -> LLMProvider:
 
         return FakeLLMProvider(model=model)
     if settings.llm_provider == "anthropic":
-        return AnthropicProvider(model=model, api_key=settings.anthropic_api_key)
+        return AnthropicProvider(model=model, api_key=_require_key(settings, "anthropic"))
     if settings.llm_provider == "gemini":
         return GeminiProvider(
             model=model,
-            api_key=settings.gemini_api_key,
+            api_key=_require_key(settings, "gemini"),
             reasoning_effort=settings.llm_reasoning_effort,
         )
     return OpenAIProvider(
         model=model,
-        api_key=settings.openai_api_key,
+        api_key=_require_key(settings, "openai"),
         reasoning_effort=settings.llm_reasoning_effort,
     )
