@@ -13,8 +13,8 @@ session lifecycle.
 
 Consumers:
 
-- [`booksmart`](https://pypi.org/project/booksmart/) — the local CLI (SQLite,
-  embedded Qdrant).
+- [`booksmart`](https://github.com/dworznik/booksmart/tree/main/packages/cli) —
+  the local CLI (SQLite, embedded Qdrant).
 - `booksmart-api` — an Inngest-backed service (Postgres) that wraps each Stage in
   a durable step.
 
