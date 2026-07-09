@@ -46,15 +46,13 @@ from booksmart_core.summaries import (
     build_summary_prompt,
     parse_summary_response,
 )
-from booksmart_core.vectors import VectorRecord, VectorStore
+from booksmart_core.vectors import RecordType, VectorRecord, VectorStore
 
 Stage = Literal["parse", "structure", "profile", "extraction", "summaries", "embeddings"]
 
 # Stages that call an LLM provider (used by the Runner to decide what to build
 # and which version stamps to record).
 LLM_STAGES: frozenset[Stage] = frozenset({"profile", "extraction", "summaries"})
-
-RecordType = Literal["chapter", "section", "knowledge_object"]
 
 
 @dataclass(frozen=True)

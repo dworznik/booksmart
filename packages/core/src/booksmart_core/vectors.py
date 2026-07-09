@@ -14,7 +14,7 @@ migration: drop the collection and reprocess embeddings for every book.
 """
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, get_args
 
 from qdrant_client import QdrantClient
 from qdrant_client import models as qmodels
@@ -25,6 +25,14 @@ from booksmart_core.errors import ProviderConfigError
 COLLECTION_NAME = "booksmart"
 
 EMBEDDING_MODEL_KEY = "embedding_model"
+
+# The relational row a point was embedded from, recorded in its payload as
+# record_type + record_id. The payload is the only link back from a vector to
+# the source of truth, so this literal is the collection's contract — writers
+# (the embedding stage) and readers (search) both spell it from here.
+RecordType = Literal["chapter", "section", "knowledge_object"]
+
+RECORD_TYPES: tuple[RecordType, ...] = get_args(RecordType)
 
 
 @dataclass(frozen=True)
@@ -39,9 +47,31 @@ class VectorStore:
         self.client = client
         self.collection = collection
 
+    def locked_model(self) -> str | None:
+        """The embedding model this collection is locked to, or ``None`` when the
+        collection does not exist yet (nothing has ever been embedded).
+
+        Raises if the collection exists but records no model: a collection
+        created before model locking cannot have its lock verified, and treating
+        its vectors as the configured model's is exactly the silent mixing ADR
+        0001 forbids. Both readers and writers need the lock, so both go through
+        here."""
+        if not self.client.collection_exists(self.collection):
+            return None
+        metadata = self.client.get_collection(self.collection).config.metadata or {}
+        locked_model = metadata.get(EMBEDDING_MODEL_KEY)
+        if locked_model is None:
+            raise ProviderConfigError(
+                f"vector collection {self.collection!r} predates model locking and "
+                f"records no embedding model; drop the collection and reprocess "
+                f"embeddings to adopt model-locked storage (ADR 0001)"
+            )
+        return str(locked_model)
+
     def _ensure_collection(self, vector_size: int, embedding_model: str) -> None:
         """Create the collection for this model, or verify the model lock."""
-        if not self.client.collection_exists(self.collection):
+        locked_model = self.locked_model()
+        if locked_model is None:
             self.client.create_collection(
                 self.collection,
                 vectors_config=qmodels.VectorParams(
@@ -50,18 +80,6 @@ class VectorStore:
                 metadata={EMBEDDING_MODEL_KEY: embedding_model},
             )
             return
-        metadata = self.client.get_collection(self.collection).config.metadata or {}
-        locked_model = metadata.get(EMBEDDING_MODEL_KEY)
-        if locked_model is None:
-            # A collection created before model locking records no model, so
-            # the lock cannot be verified — stamping the configured model onto
-            # vectors that may come from another model is exactly the silent
-            # mixing ADR 0001 forbids.
-            raise ProviderConfigError(
-                f"vector collection {self.collection!r} predates model locking and "
-                f"records no embedding model; drop the collection and reprocess "
-                f"embeddings to adopt model-locked storage (ADR 0001)"
-            )
         if locked_model != embedding_model:
             raise ProviderConfigError(
                 f"vector collection {self.collection!r} is locked to embedding model "
@@ -99,6 +117,30 @@ class VectorStore:
         else:
             return
         self.client.delete(self.collection, points_selector=qmodels.FilterSelector(filter=stale))
+
+    def search(
+        self,
+        vector: list[float],
+        *,
+        query_filter: qmodels.Filter | None = None,
+        limit: int = 10,
+        offset: int = 0,
+        score_threshold: float | None = None,
+    ) -> list[qmodels.ScoredPoint]:
+        """Nearest points to ``vector``, best first (COSINE: higher is closer).
+
+        Takes an already-embedded vector, keeping the store free of any embedder
+        dependency — verifying the model lock and embedding the query belong to
+        the caller (``booksmart_core.search``)."""
+        response = self.client.query_points(
+            self.collection,
+            query=vector,
+            query_filter=query_filter,
+            limit=limit,
+            offset=offset,
+            score_threshold=score_threshold,
+        )
+        return response.points
 
 
 def build_vector_store(settings: Settings) -> VectorStore:

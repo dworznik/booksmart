@@ -1,10 +1,10 @@
 """Booksmart CLI — a local, single-user front end over booksmart-core.
 
-Strict parity with the removed HTTP surface (docs/api-notes/), nothing new:
-register and ingest books, then browse their runs, structure, profile, and
-extracted knowledge. Everything runs locally against an auto-migrated SQLite
-file and embedded Qdrant — no Docker, no Postgres, no server. Semantic search is
-deliberately out of scope here (filed as the first post-split issue)."""
+Register and ingest books, browse their runs, structure, profile and extracted
+knowledge, and search across everything embedded. Everything runs locally against
+an auto-migrated SQLite file and embedded Qdrant — no Docker, no Postgres, no
+server. Every command but ``search`` mirrors the removed HTTP surface exactly
+(docs/api-notes/); ``search`` is the first post-split feature (issue #30)."""
 
 import functools
 import uuid
@@ -372,6 +372,66 @@ def knowledge_show(
     """Show one knowledge object in full."""
     runtime = Runtime.load()
     _print_knowledge_detail(reads.get_knowledge(runtime, _parse_uuid(object_id)))
+
+
+# --- search ------------------------------------------------------------------
+
+SEARCH_SCOPE_ALL = "all"
+
+
+@app.command()
+@_handle_errors
+def search(
+    scope: Annotated[
+        str, typer.Argument(help="Book id to search within, or `all` for every book.")
+    ],
+    query: Annotated[str, typer.Argument(help="What to look for, in plain language.")],
+    type: Annotated[
+        Optional[list[str]],
+        typer.Option(help="Restrict to a record type; repeatable."),
+    ] = None,
+    limit: Annotated[int, typer.Option(help="Maximum number of hits.")] = 10,
+    score_threshold: Annotated[
+        Optional[float],
+        typer.Option(help="Drop hits below this cosine similarity (0-1)."),
+    ] = None,
+) -> None:
+    """Find the chapters, sections and knowledge objects most similar to a query.
+
+    Searches the embeddings an ingest produced, so a book has to be ingested
+    before it can be found.
+    """
+    book_id = None if scope == SEARCH_SCOPE_ALL else _parse_uuid(scope)
+    runtime = Runtime.load()
+    hits = reads.semantic_search(
+        runtime,
+        query,
+        book_id=book_id,
+        record_types=type,
+        limit=limit,
+        score_threshold=score_threshold,
+    )
+    if not hits:
+        console.print("No matches. Ingest a book first, or try a broader query.")
+        return
+
+    table = Table("score", "type", "title", "match")
+    if book_id is None:
+        table.add_column("book")
+    for hit in hits:
+        row = [f"{hit.score:.3f}", hit.record_type, hit.title, _snippet(hit.text)]
+        if book_id is None:
+            row.append(str(hit.book_id))
+        table.add_row(*row)
+    console.print(table)
+
+
+def _snippet(text: str, width: int = 60) -> str:
+    """The embedded text as one line, short enough to sit in a table cell."""
+    flattened = " ".join(text.split())
+    if len(flattened) <= width:
+        return flattened
+    return flattened[: width - 1].rstrip() + "…"
 
 
 def _print_knowledge_detail(obj: KnowledgeObject) -> None:
