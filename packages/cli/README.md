@@ -28,7 +28,7 @@ $ booksmart search all "how do deep modules reduce complexity"
 knowledge objects most similar to a natural-language query, over the embeddings
 an ingest produced. Restrict it with `--type` (repeatable: `chapter`, `section`,
 `knowledge_object`), cap it with `--limit`, and drop weak hits with
-`--score-threshold` (a cosine similarity, `0`–`1`).
+`--score-threshold` (a cosine similarity, `-1`–`1`).
 
 The query is embedded with the model the vector collection is locked to; if that
 is not the currently configured embedding model, search refuses rather than

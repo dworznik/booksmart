@@ -393,7 +393,7 @@ def search(
     limit: Annotated[int, typer.Option(help="Maximum number of hits.")] = 10,
     score_threshold: Annotated[
         Optional[float],
-        typer.Option(help="Drop hits below this cosine similarity (0-1)."),
+        typer.Option(help="Drop hits below this cosine similarity (-1 to 1)."),
     ] = None,
 ) -> None:
     """Find the chapters, sections and knowledge objects most similar to a query.

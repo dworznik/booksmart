@@ -116,4 +116,4 @@ class Runtime:
             # Release the embedded Qdrant on-disk lock so the next command (or a
             # relocated copy of the data dir) can open it.
             if vector_store is not None:
-                vector_store.client.close()
+                vector_store.close()

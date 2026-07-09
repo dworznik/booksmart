@@ -13,6 +13,7 @@ no operator can diagnose from symptoms. Switching models is an explicit
 migration: drop the collection and reprocess embeddings for every book.
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Literal, get_args
 
@@ -35,6 +36,12 @@ RecordType = Literal["chapter", "section", "knowledge_object"]
 RECORD_TYPES: tuple[RecordType, ...] = get_args(RecordType)
 
 
+def unknown_record_types(names: Iterable[str]) -> list[str]:
+    """Which of ``names`` are not record types, sorted. Callers phrase the error
+    in their own taxonomy — core raises for a caller bug, the CLI for a typo."""
+    return sorted(set(names) - set(RECORD_TYPES))
+
+
 @dataclass(frozen=True)
 class VectorRecord:
     id: str  # UUID string; stored on the relational row as embedding_id
@@ -46,6 +53,12 @@ class VectorStore:
     def __init__(self, client: QdrantClient, collection: str = COLLECTION_NAME) -> None:
         self.client = client
         self.collection = collection
+
+    def close(self) -> None:
+        """Release the store. Embedded on-disk Qdrant holds a single-process lock
+        on its directory, so a command that does not close it locks out the next
+        one; against a server this just drops the connection."""
+        self.client.close()
 
     def locked_model(self) -> str | None:
         """The embedding model this collection is locked to, or ``None`` when the

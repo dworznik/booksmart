@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from booksmart_core.errors import ProviderConfigError
 from booksmart_core.llm import EmbeddingProvider
 from booksmart_core.models import Chapter, KnowledgeObject, Section
-from booksmart_core.vectors import RECORD_TYPES, RecordType, VectorStore
+from booksmart_core.vectors import RECORD_TYPES, RecordType, VectorStore, unknown_record_types
 
 Record = Chapter | Section | KnowledgeObject
 
@@ -107,9 +107,12 @@ def search(
 
 
 def _validate_record_types(record_types: Sequence[RecordType] | None) -> None:
-    unknown = sorted(set(record_types or ()) - set(RECORD_TYPES))
+    """A record type outside the collection's contract is a caller bug, not a
+    configuration mistake — so a plain ValueError, not a taxonomy error. Filtering
+    on it would otherwise just return nothing, which reads as "no matches"."""
+    unknown = unknown_record_types(record_types or ())
     if unknown:
-        raise ProviderConfigError(
+        raise ValueError(
             f"Unknown record type(s) {', '.join(repr(name) for name in unknown)}; "
             f"expected one of {', '.join(RECORD_TYPES)}"
         )

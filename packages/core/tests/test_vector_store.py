@@ -84,3 +84,20 @@ class TestModelLockedCollection:
         store.replace_book_points("book-1", [], embedding_model="embed-a")
 
         assert not store.client.collection_exists(store.collection)
+
+    def test_locked_model_reports_no_lock_before_anything_is_embedded(
+        self, store: VectorStore
+    ) -> None:
+        assert store.locked_model() is None
+
+        store.replace_book_points("book-1", make_records(), embedding_model="embed-a")
+
+        assert store.locked_model() == "embed-a"
+
+
+def test_close_releases_the_store(store: VectorStore) -> None:
+    # Embedded on-disk Qdrant locks its directory until closed; readers of a
+    # closed store are the caller's problem, but closing must not raise.
+    store.replace_book_points("book-1", make_records(), embedding_model="embed-a")
+
+    store.close()

@@ -19,7 +19,12 @@ from booksmart_core.llm import build_embedding_provider
 from booksmart_core.models import Book, BookProfile, Chapter, KnowledgeObject, Run
 from booksmart_core.search import SearchHit
 from booksmart_core.search import search as core_search
-from booksmart_core.vectors import RECORD_TYPES, RecordType, build_vector_store
+from booksmart_core.vectors import (
+    RECORD_TYPES,
+    RecordType,
+    build_vector_store,
+    unknown_record_types,
+)
 
 from booksmart_cli.errors import (
     BookNotFoundError,
@@ -178,7 +183,7 @@ def semantic_search(
         raise CliError("Search query must not be empty")
     if limit < 1:
         raise CliError(f"--limit must be at least 1, got {limit}")
-    unknown = sorted(set(record_types or ()) - set(RECORD_TYPES))
+    unknown = unknown_record_types(record_types or ())
     if unknown:
         raise CliError(
             f"Unknown record type {', '.join(repr(name) for name in unknown)}; "
@@ -206,4 +211,4 @@ def semantic_search(
                 score_threshold=score_threshold,
             )
     finally:
-        vector_store.client.close()
+        vector_store.close()

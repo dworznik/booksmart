@@ -274,9 +274,12 @@ class TestFilters:
         with session_factory() as session:
             seed(session, store, book_id)
             bad_types: list[RecordType] = ["paragraph"]  # type: ignore[list-item]
-            with pytest.raises(ProviderConfigError) as excinfo:
+            # A caller bug, not a misconfiguration: a plain ValueError, and never
+            # a silent empty result from filtering on a type nothing can carry.
+            with pytest.raises(ValueError) as excinfo:
                 search(session, store, embedder, "deep modules", record_types=bad_types)
 
+        assert not isinstance(excinfo.value, ProviderConfigError)
         assert "paragraph" in str(excinfo.value)
 
 
