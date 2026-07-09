@@ -11,11 +11,17 @@ no Postgres, no server.
 
 ## Install
 
+Needs Python 3.12 or newer. `booksmart` is a command-line tool, so install it
+into its own environment rather than into a project's:
+
 ```console
 $ uv tool install booksmart
+$ pipx install booksmart
 ```
 
-`booksmart-core` comes along as a dependency.
+Either puts a `booksmart` command on your PATH. Plain `pip install booksmart`
+also works if you would rather have it in the current environment.
+`booksmart-core` comes along as a dependency in every case.
 
 ## Quickstart
 

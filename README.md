@@ -19,8 +19,10 @@ in its own repository and builds on `booksmart-core`.
 
 ## Install
 
+Python 3.12+, with `uv tool install` or `pipx install`:
+
 ```console
-$ uv tool install booksmart
+$ uv tool install booksmart        # or: pipx install booksmart
 $ booksmart add ./clean-code.pdf --title "Clean Code" --author "Robert C. Martin"
 $ booksmart ingest <book-id>
 $ booksmart search all "how do deep modules reduce complexity"
