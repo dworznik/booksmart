@@ -184,7 +184,7 @@ def _resolve(session: Session, points: Sequence[qmodels.ScoredPoint]) -> list[Se
 
 def _ref(payload: dict[str, object]) -> _Ref | None:
     record_type = payload.get("record_type")
-    if record_type not in RECORD_TYPES:
+    if not isinstance(record_type, str) or record_type not in RECORD_TYPES:
         return None
     try:
         record_id = uuid.UUID(str(payload.get("record_id")))
