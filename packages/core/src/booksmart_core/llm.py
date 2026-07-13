@@ -86,12 +86,14 @@ class EmbeddingLimits:
 # enforce it; if we don't, we say so and defer to the API.
 
 _ANTHROPIC_LLM_LIMITS = {
-    # The models' own output caps differ (Opus 4.8 and Sonnet 5 at 128k, Haiku
-    # 4.5 at 64k), but none of them binds: this provider calls the API
-    # non-streaming, and the SDK refuses non-streaming requests above ~21.3k
-    # tokens ("streaming is required for operations that may take longer than
-    # 10 minutes"). That ceiling is a hardcoded throughput heuristic which never
-    # consults the model's cap, so the usable Limit is the same for every model.
+    # Each model declares a different output Limit (Opus 4.8 and Sonnet 5 at
+    # 128k, Haiku 4.5 at 64k), but none of them is the one that binds: this
+    # provider calls the API non-streaming, and the SDK refuses non-streaming
+    # requests above ~21.3k tokens ("streaming is required for operations that
+    # may take longer than 10 minutes"). That threshold is a hardcoded
+    # throughput heuristic which never consults the model, so the Limit we can
+    # actually use is the same for every Claude model — which is why Haiku 4.5
+    # takes the same 20000 despite declaring half the output of the other two.
     # valid_reasoning_efforts stays None: the Anthropic provider does not take
     # the reasoning-effort Preference, so there is nothing to validate.
     "claude-opus-4-8": LLMLimits(max_output_tokens=20000),
@@ -107,8 +109,9 @@ _OPENAI_LLM_LIMITS = {
         valid_reasoning_efforts=("none", "low", "medium", "high", "xhigh"),
     ),
     # The gpt-5 generation is the mirror image of gpt-5.5: it takes "minimal",
-    # but predates both "none" (gpt-5.1) and "xhigh" (gpt-5.1-codex-max). Same
-    # 128k output ceiling as gpt-5.5 — 4x what the vendor default guesses.
+    # but predates both "none" (gpt-5.1) and "xhigh" (gpt-5.1-codex-max). Its
+    # output Limit is the same 128k as gpt-5.5 — 4x what the vendor default
+    # guesses for an unknown model.
     "gpt-5-mini": LLMLimits(
         max_output_tokens=128000,
         valid_reasoning_efforts=("minimal", "low", "medium", "high"),

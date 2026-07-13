@@ -51,7 +51,7 @@ class TestLLMLimitResolution:
     ) -> None:
         # The cheap tiers are the point of #47: before they were tabulated they
         # fell through to a vendor default that under-reported OpenAI's output
-        # ceiling 4x, and said so in a warning on every run.
+        # Limit 4x, and said so in a warning on every run.
         with caplog.at_level(logging.WARNING, logger="booksmart_core.llm"):
             mini = OpenAIProvider(model="gpt-5-mini", api_key="test")
             nano = OpenAIProvider(model="gpt-5-nano", api_key="test")
@@ -59,8 +59,9 @@ class TestLLMLimitResolution:
 
         assert mini.max_output_tokens == 128000
         assert nano.max_output_tokens == 128000
-        # Haiku's own cap is 64k, but the SDK's model-independent non-streaming
-        # ceiling (~21.3k) binds first, exactly as for Opus and Sonnet.
+        # Haiku declares half the output of Opus and Sonnet, but resolves to the
+        # same 20000: the SDK's non-streaming threshold binds before the model's
+        # own Limit does, and that threshold ignores the model.
         assert haiku.max_output_tokens == 20000
         assert caplog.records == []
 
@@ -75,13 +76,6 @@ class TestLLMLimitResolution:
         assert nano.valid_reasoning_efforts == ("minimal", "low", "medium", "high")
         assert gpt55.valid_reasoning_efforts is not None
         assert "minimal" not in gpt55.valid_reasoning_efforts
-
-    def test_anthropic_models_validate_no_efforts_because_none_are_sent(self) -> None:
-        # Not "unknown": AnthropicProvider takes no reasoning_effort argument and
-        # build_llm_provider never forwards one, so there is nothing to validate.
-        haiku = AnthropicProvider(model="claude-haiku-4-5", api_key="test")
-
-        assert not hasattr(haiku, "reasoning_effort")
 
     def test_unknown_model_falls_back_to_vendor_defaults_with_log(
         self, caplog: pytest.LogCaptureFixture
@@ -221,6 +215,27 @@ class TestReasoningEffortValidation:
 
         with pytest.raises(ProviderConfigError):
             build_llm_provider(settings)
+
+    def test_anthropic_ignores_the_effort_preference_rather_than_validating_it(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The None in the Anthropic table is not "unknown, so gamble" — it is
+        # "nothing to validate": build_llm_provider never forwards the effort to
+        # AnthropicProvider, which takes no such argument. So an effort that no
+        # Claude model would accept is neither rejected nor warned about; it
+        # simply cannot reach the API. Pins the reason the table entry is None.
+        settings = Settings(
+            llm_provider="anthropic",
+            llm_model="claude-haiku-4-5",
+            llm_reasoning_effort="xhigh",
+            anthropic_api_key="test",
+        )
+
+        with caplog.at_level(logging.WARNING, logger="booksmart_core.llm"):
+            provider = build_llm_provider(settings)
+
+        assert isinstance(provider, AnthropicProvider)
+        assert caplog.records == []
 
 
 class TestEmbeddingLimitResolution:
