@@ -65,16 +65,18 @@ class VectorStore:
         one; against a server this just drops the connection."""
         self.client.close()
 
-    def locked_model(self) -> str | None:
-        """The embedding model this collection is locked to, or ``None`` when the
-        collection does not exist yet (nothing has ever been embedded).
+    def verified_model(self) -> str | None:
+        """Verify the collection matches this code's storage contract, and report
+        the embedding model it is locked to — ``None`` when the collection does
+        not exist yet (nothing has ever been embedded).
 
-        Raises if the collection exists but does not match the current contract
-        — no recorded model, or no ``dense`` vector to read and write (an old
-        unnamed schema, or named vectors that simply lack it). Either way its
-        vectors cannot be verified or addressed as this code expects, and
-        adopting them silently is exactly what ADR 0001 forbids. Both readers
-        and writers need the lock, so both go through here."""
+        The contract is two-part: the collection records the model it was created
+        for (ADR 0001), and it stores that model's vectors under the name this
+        code reads and writes (``dense``). A collection that breaks either part
+        is refused, not adopted — its vectors cannot be verified or even
+        addressed as this code expects, and reading them anyway is exactly the
+        silent mixing ADR 0001 forbids. Both readers and writers need the model,
+        so both come through here and get the check for free."""
         if not self.client.collection_exists(self.collection):
             return None
         config = self.client.get_collection(self.collection).config
@@ -107,7 +109,7 @@ class VectorStore:
 
     def _ensure_collection(self, vector_size: int, embedding_model: str) -> None:
         """Create the collection for this model, or verify the model lock."""
-        locked_model = self.locked_model()
+        locked_model = self.verified_model()
         if locked_model is None:
             self.client.create_collection(
                 self.collection,

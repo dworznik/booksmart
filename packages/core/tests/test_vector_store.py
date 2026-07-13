@@ -100,7 +100,7 @@ class TestModelLockedCollection:
 
         # Readers verify the lock through the same gate, so search is refused too.
         with pytest.raises(ProviderConfigError):
-            store.locked_model()
+            store.verified_model()
 
     def test_named_schema_without_a_dense_vector_is_rejected(self, store: VectorStore) -> None:
         # A collection whose named vectors do not include "dense" cannot serve
@@ -142,14 +142,14 @@ class TestModelLockedCollection:
 
         assert not store.client.collection_exists(store.collection)
 
-    def test_locked_model_reports_no_lock_before_anything_is_embedded(
+    def test_verified_model_reports_no_lock_before_anything_is_embedded(
         self, store: VectorStore
     ) -> None:
-        assert store.locked_model() is None
+        assert store.verified_model() is None
 
         store.replace_book_points("book-1", make_records(), embedding_model="embed-a")
 
-        assert store.locked_model() == "embed-a"
+        assert store.verified_model() == "embed-a"
 
 
 def test_close_releases_the_store(store: VectorStore) -> None:
