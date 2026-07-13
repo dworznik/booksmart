@@ -389,6 +389,18 @@ now stale — see §5.
    when `gpt-5.1` shipped. Worth a comment fix, not a behaviour change. (Out of scope
    for #47 but adjacent; flagging as asked.)
 
+   **The workaround is still load-bearing, for a different reason** — worth recording so
+   nobody deletes it on the strength of the paragraph above. `reasoning_effort` is typed
+   `Literal["none", "minimal", "low", "medium", "high", "xhigh"] | Omit`, while a
+   Preference reaches this seam as a plain `str` (from `Settings.llm_reasoning_effort`).
+   Passing it directly fails `mypy --strict`:
+   *`Argument "reasoning_effort" … has incompatible type "str | None"; expected
+   "Literal[…] | None | Omit | None"`*. And widening the seam to that Literal would be
+   wrong regardless: it enumerates the efforts **OpenAI** accepts, but the same
+   `complete()` also serves Gemini's compat layer, whose valid set is its own. The
+   effort is validated against this module's tables, not the SDK's type — `extra_body`
+   is what keeps the SDK type from imposing one vendor's enum on every vendor.
+
 3. **Observation, not a bug: `gpt-5.5` is not in the installed SDK's `ChatModel`
    literal.** `openai/types/shared/chat_model.py` (2.44.0) tops out at `gpt-5.4`. This
    is fine — the request field is typed `model: Required[Union[str, ChatModel]]`

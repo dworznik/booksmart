@@ -46,6 +46,43 @@ class TestLLMLimitResolution:
 
         assert provider.max_output_tokens == 128000
 
+    def test_cheap_tier_models_resolve_from_the_tables_not_the_vendor_default(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The cheap tiers are the point of #47: before they were tabulated they
+        # fell through to a vendor default that under-reported OpenAI's output
+        # ceiling 4x, and said so in a warning on every run.
+        with caplog.at_level(logging.WARNING, logger="booksmart_core.llm"):
+            mini = OpenAIProvider(model="gpt-5-mini", api_key="test")
+            nano = OpenAIProvider(model="gpt-5-nano", api_key="test")
+            haiku = AnthropicProvider(model="claude-haiku-4-5", api_key="test")
+
+        assert mini.max_output_tokens == 128000
+        assert nano.max_output_tokens == 128000
+        # Haiku's own cap is 64k, but the SDK's model-independent non-streaming
+        # ceiling (~21.3k) binds first, exactly as for Opus and Sonnet.
+        assert haiku.max_output_tokens == 20000
+        assert caplog.records == []
+
+    def test_gpt_5_generation_accepts_minimal_effort_and_gpt_5_5_does_not(self) -> None:
+        # The two tuples are mirror images: the gpt-5 generation takes "minimal"
+        # but predates both "none" (gpt-5.1) and "xhigh" (gpt-5.1-codex-max).
+        mini = OpenAIProvider(model="gpt-5-mini", api_key="test")
+        nano = OpenAIProvider(model="gpt-5-nano", api_key="test")
+        gpt55 = OpenAIProvider(model="gpt-5.5", api_key="test")
+
+        assert mini.valid_reasoning_efforts == ("minimal", "low", "medium", "high")
+        assert nano.valid_reasoning_efforts == ("minimal", "low", "medium", "high")
+        assert gpt55.valid_reasoning_efforts is not None
+        assert "minimal" not in gpt55.valid_reasoning_efforts
+
+    def test_anthropic_models_validate_no_efforts_because_none_are_sent(self) -> None:
+        # Not "unknown": AnthropicProvider takes no reasoning_effort argument and
+        # build_llm_provider never forwards one, so there is nothing to validate.
+        haiku = AnthropicProvider(model="claude-haiku-4-5", api_key="test")
+
+        assert not hasattr(haiku, "reasoning_effort")
+
     def test_unknown_model_falls_back_to_vendor_defaults_with_log(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -141,6 +178,24 @@ class TestReasoningEffortValidation:
         )
 
         assert provider.reasoning_effort == "none"
+
+    def test_effort_the_gpt_5_generation_predates_is_rejected(self) -> None:
+        # "none" arrived with gpt-5.1 and "xhigh" after gpt-5.1-codex-max, so a
+        # Preference carrying either is a config error on mini/nano — before #47
+        # both passed through unvalidated for the API to reject at call time.
+        for effort in ("none", "xhigh"):
+            with pytest.raises(ProviderConfigError) as excinfo:
+                OpenAIProvider(model="gpt-5-mini", api_key="test", reasoning_effort=effort)
+
+            message = str(excinfo.value)
+            assert f"{effort!r}" in message
+            assert "gpt-5-mini" in message
+            assert "minimal, low, medium, high" in message
+
+    def test_minimal_effort_is_accepted_on_the_gpt_5_generation(self) -> None:
+        provider = OpenAIProvider(model="gpt-5-nano", api_key="test", reasoning_effort="minimal")
+
+        assert provider.reasoning_effort == "minimal"
 
     def test_effort_on_unknown_model_passes_through_as_logged_gamble(
         self, caplog: pytest.LogCaptureFixture

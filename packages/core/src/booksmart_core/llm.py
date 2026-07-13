@@ -86,14 +86,17 @@ class EmbeddingLimits:
 # enforce it; if we don't, we say so and defer to the API.
 
 _ANTHROPIC_LLM_LIMITS = {
-    # Both models cap output at 128k, but this provider calls the API
-    # non-streaming and the SDK refuses non-streaming requests above ~21.3k
+    # The models' own output caps differ (Opus 4.8 and Sonnet 5 at 128k, Haiku
+    # 4.5 at 64k), but none of them binds: this provider calls the API
+    # non-streaming, and the SDK refuses non-streaming requests above ~21.3k
     # tokens ("streaming is required for operations that may take longer than
-    # 10 minutes"), so the usable Limit is the non-streaming ceiling.
+    # 10 minutes"). That ceiling is a hardcoded throughput heuristic which never
+    # consults the model's cap, so the usable Limit is the same for every model.
     # valid_reasoning_efforts stays None: the Anthropic provider does not take
     # the reasoning-effort Preference, so there is nothing to validate.
     "claude-opus-4-8": LLMLimits(max_output_tokens=20000),
     "claude-sonnet-5": LLMLimits(max_output_tokens=20000),
+    "claude-haiku-4-5": LLMLimits(max_output_tokens=20000),
 }
 _ANTHROPIC_LLM_DEFAULT = LLMLimits(max_output_tokens=20000)
 
@@ -102,6 +105,17 @@ _OPENAI_LLM_LIMITS = {
     "gpt-5.5": LLMLimits(
         max_output_tokens=128000,
         valid_reasoning_efforts=("none", "low", "medium", "high", "xhigh"),
+    ),
+    # The gpt-5 generation is the mirror image of gpt-5.5: it takes "minimal",
+    # but predates both "none" (gpt-5.1) and "xhigh" (gpt-5.1-codex-max). Same
+    # 128k output ceiling as gpt-5.5 — 4x what the vendor default guesses.
+    "gpt-5-mini": LLMLimits(
+        max_output_tokens=128000,
+        valid_reasoning_efforts=("minimal", "low", "medium", "high"),
+    ),
+    "gpt-5-nano": LLMLimits(
+        max_output_tokens=128000,
+        valid_reasoning_efforts=("minimal", "low", "medium", "high"),
     ),
 }
 _OPENAI_LLM_DEFAULT = LLMLimits(max_output_tokens=32000)
@@ -269,8 +283,11 @@ class OpenAIProvider:
         if system is not None:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        # Via extra_body because Gemini's compat layer accepts "none", which
-        # the OpenAI SDK's reasoning_effort type does not.
+        # Via extra_body because a Preference is a plain str here, while the
+        # SDK's reasoning_effort param is a Literal of the efforts OpenAI itself
+        # accepts — too narrow for a seam that also serves Gemini's compat layer,
+        # whose valid efforts are its own. The table, not the SDK type, is what
+        # validates this value (see _validate_reasoning_effort).
         extra_body = (
             {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort else None
         )
