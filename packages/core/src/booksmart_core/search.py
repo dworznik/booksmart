@@ -84,7 +84,7 @@ def search(
     """
     _validate_record_types(record_types)
 
-    locked_model = vector_store.locked_model()
+    locked_model = vector_store.verified_model()
     if locked_model is None:
         return []  # nothing embedded yet; not worth embedding the query
     if locked_model != embedder.model:

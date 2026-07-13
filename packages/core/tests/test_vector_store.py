@@ -80,19 +80,76 @@ class TestModelLockedCollection:
         assert "drop" in message.lower()
         assert "reprocess" in message.lower()
 
+    def test_legacy_unnamed_vector_schema_is_rejected(self, store: VectorStore) -> None:
+        # A collection created before vectors were named cannot be written or
+        # queried under the named schema; like a model switch, adopting it is
+        # an explicit migration (ADR 0001), not a silent read.
+        store.client.create_collection(
+            store.collection,
+            vectors_config=qmodels.VectorParams(size=3, distance=qmodels.Distance.COSINE),
+            metadata={"embedding_model": "embed-a"},
+        )
+
+        with pytest.raises(ProviderConfigError) as excinfo:
+            store.replace_book_points("book-1", make_records(), embedding_model="embed-a")
+
+        message = str(excinfo.value)
+        assert "predates named vectors" in message
+        assert "drop" in message.lower()
+        assert "reprocess" in message.lower()
+
+        # Readers verify the lock through the same gate, so search is refused too.
+        with pytest.raises(ProviderConfigError):
+            store.verified_model()
+
+    def test_named_schema_without_a_dense_vector_is_rejected(self, store: VectorStore) -> None:
+        # A collection whose named vectors do not include "dense" cannot serve
+        # this code either. Without the gate, the miss surfaces as a raw
+        # "Not existing vector name" ValueError from the client, with none of
+        # the migration guidance ADR 0001 promises.
+        store.client.create_collection(
+            store.collection,
+            vectors_config={
+                "embedding": qmodels.VectorParams(size=3, distance=qmodels.Distance.COSINE)
+            },
+            metadata={"embedding_model": "embed-a"},
+        )
+
+        with pytest.raises(ProviderConfigError) as excinfo:
+            store.replace_book_points("book-1", make_records(), embedding_model="embed-a")
+
+        message = str(excinfo.value)
+        assert "dense" in message
+        assert "embedding" in message  # names what the collection does define
+        assert "drop" in message.lower()
+        assert "reprocess" in message.lower()
+
+    def test_points_live_under_the_named_dense_vector(self, store: VectorStore) -> None:
+        # The named schema is the collection's contract (issue #37): sparse
+        # vectors can later be added beside "dense" without a schema pivot.
+        records = make_records(count=1)
+        store.replace_book_points("book-1", records, embedding_model="embed-a")
+
+        vectors_config = store.client.get_collection(store.collection).config.params.vectors
+        assert isinstance(vectors_config, dict)
+        assert set(vectors_config) == {"dense"}
+
+        hits = store.search([1.0, 1.0, 1.0], limit=1)
+        assert [hit.id for hit in hits] == [records[0].id]
+
     def test_empty_replace_needs_no_collection(self, store: VectorStore) -> None:
         store.replace_book_points("book-1", [], embedding_model="embed-a")
 
         assert not store.client.collection_exists(store.collection)
 
-    def test_locked_model_reports_no_lock_before_anything_is_embedded(
+    def test_verified_model_reports_no_lock_before_anything_is_embedded(
         self, store: VectorStore
     ) -> None:
-        assert store.locked_model() is None
+        assert store.verified_model() is None
 
         store.replace_book_points("book-1", make_records(), embedding_model="embed-a")
 
-        assert store.locked_model() == "embed-a"
+        assert store.verified_model() == "embed-a"
 
 
 def test_close_releases_the_store(store: VectorStore) -> None:

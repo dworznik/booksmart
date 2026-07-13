@@ -27,6 +27,11 @@ COLLECTION_NAME = "booksmart"
 
 EMBEDDING_MODEL_KEY = "embedding_model"
 
+# The collection's one dense vector, stored under an explicit name so that
+# adding further named vectors (e.g. a sparse one for hybrid retrieval) is
+# additive rather than a schema pivot.
+DENSE_VECTOR_NAME = "dense"
+
 # The relational row a point was embedded from, recorded in its payload as
 # record_type + record_id. The payload is the only link back from a vector to
 # the source of truth, so this literal is the collection's contract — writers
@@ -60,36 +65,59 @@ class VectorStore:
         one; against a server this just drops the connection."""
         self.client.close()
 
-    def locked_model(self) -> str | None:
-        """The embedding model this collection is locked to, or ``None`` when the
-        collection does not exist yet (nothing has ever been embedded).
+    def verified_model(self) -> str | None:
+        """Verify the collection matches this code's storage contract, and report
+        the embedding model it is locked to — ``None`` when the collection does
+        not exist yet (nothing has ever been embedded).
 
-        Raises if the collection exists but records no model: a collection
-        created before model locking cannot have its lock verified, and treating
-        its vectors as the configured model's is exactly the silent mixing ADR
-        0001 forbids. Both readers and writers need the lock, so both go through
-        here."""
+        The contract is two-part: the collection records the model it was created
+        for (ADR 0001), and it stores that model's vectors under the name this
+        code reads and writes (``dense``). A collection that breaks either part
+        is refused, not adopted — its vectors cannot be verified or even
+        addressed as this code expects, and reading them anyway is exactly the
+        silent mixing ADR 0001 forbids. Both readers and writers need the model,
+        so both come through here and get the check for free."""
         if not self.client.collection_exists(self.collection):
             return None
-        metadata = self.client.get_collection(self.collection).config.metadata or {}
-        locked_model = metadata.get(EMBEDDING_MODEL_KEY)
+        config = self.client.get_collection(self.collection).config
+        locked_model = (config.metadata or {}).get(EMBEDDING_MODEL_KEY)
         if locked_model is None:
             raise ProviderConfigError(
                 f"vector collection {self.collection!r} predates model locking and "
                 f"records no embedding model; drop the collection and reprocess "
                 f"embeddings to adopt model-locked storage (ADR 0001)"
             )
+        vectors = config.params.vectors
+        if not isinstance(vectors, dict):
+            raise ProviderConfigError(
+                f"vector collection {self.collection!r} predates named vectors and "
+                f"stores its embeddings under the old unnamed schema; drop the "
+                f"collection and reprocess embeddings to adopt named-vector "
+                f"storage (ADR 0001)"
+            )
+        if DENSE_VECTOR_NAME not in vectors:
+            # Named, but not with the vector this code reads and writes; without
+            # this the miss surfaces as an opaque "not existing vector name"
+            # error from the client, deep inside a write or a query.
+            defined = ", ".join(repr(name) for name in sorted(vectors)) or "none"
+            raise ProviderConfigError(
+                f"vector collection {self.collection!r} defines no {DENSE_VECTOR_NAME!r} "
+                f"vector (it defines {defined}); drop the collection and reprocess "
+                f"embeddings to adopt named-vector storage (ADR 0001)"
+            )
         return str(locked_model)
 
     def _ensure_collection(self, vector_size: int, embedding_model: str) -> None:
         """Create the collection for this model, or verify the model lock."""
-        locked_model = self.locked_model()
+        locked_model = self.verified_model()
         if locked_model is None:
             self.client.create_collection(
                 self.collection,
-                vectors_config=qmodels.VectorParams(
-                    size=vector_size, distance=qmodels.Distance.COSINE
-                ),
+                vectors_config={
+                    DENSE_VECTOR_NAME: qmodels.VectorParams(
+                        size=vector_size, distance=qmodels.Distance.COSINE
+                    )
+                },
                 metadata={EMBEDDING_MODEL_KEY: embedding_model},
             )
             return
@@ -115,7 +143,11 @@ class VectorStore:
             self.client.upsert(
                 self.collection,
                 points=[
-                    qmodels.PointStruct(id=record.id, vector=record.vector, payload=record.payload)
+                    qmodels.PointStruct(
+                        id=record.id,
+                        vector={DENSE_VECTOR_NAME: record.vector},
+                        payload=record.payload,
+                    )
                     for record in records
                 ],
             )
@@ -148,6 +180,7 @@ class VectorStore:
         response = self.client.query_points(
             self.collection,
             query=vector,
+            using=DENSE_VECTOR_NAME,
             query_filter=query_filter,
             limit=limit,
             offset=offset,
