@@ -102,6 +102,28 @@ class TestModelLockedCollection:
         with pytest.raises(ProviderConfigError):
             store.locked_model()
 
+    def test_named_schema_without_a_dense_vector_is_rejected(self, store: VectorStore) -> None:
+        # A collection whose named vectors do not include "dense" cannot serve
+        # this code either. Without the gate, the miss surfaces as a raw
+        # "Not existing vector name" ValueError from the client, with none of
+        # the migration guidance ADR 0001 promises.
+        store.client.create_collection(
+            store.collection,
+            vectors_config={
+                "embedding": qmodels.VectorParams(size=3, distance=qmodels.Distance.COSINE)
+            },
+            metadata={"embedding_model": "embed-a"},
+        )
+
+        with pytest.raises(ProviderConfigError) as excinfo:
+            store.replace_book_points("book-1", make_records(), embedding_model="embed-a")
+
+        message = str(excinfo.value)
+        assert "dense" in message
+        assert "embedding" in message  # names what the collection does define
+        assert "drop" in message.lower()
+        assert "reprocess" in message.lower()
+
     def test_points_live_under_the_named_dense_vector(self, store: VectorStore) -> None:
         # The named schema is the collection's contract (issue #37): sparse
         # vectors can later be added beside "dense" without a schema pivot.

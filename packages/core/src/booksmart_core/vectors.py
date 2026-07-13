@@ -69,11 +69,12 @@ class VectorStore:
         """The embedding model this collection is locked to, or ``None`` when the
         collection does not exist yet (nothing has ever been embedded).
 
-        Raises if the collection exists but predates the current contract — no
-        recorded model, or vectors stored under the old unnamed schema. Either
-        way its vectors cannot be verified or addressed as this code expects,
-        and adopting them silently is exactly what ADR 0001 forbids. Both
-        readers and writers need the lock, so both go through here."""
+        Raises if the collection exists but does not match the current contract
+        — no recorded model, or no ``dense`` vector to read and write (an old
+        unnamed schema, or named vectors that simply lack it). Either way its
+        vectors cannot be verified or addressed as this code expects, and
+        adopting them silently is exactly what ADR 0001 forbids. Both readers
+        and writers need the lock, so both go through here."""
         if not self.client.collection_exists(self.collection):
             return None
         config = self.client.get_collection(self.collection).config
@@ -84,12 +85,23 @@ class VectorStore:
                 f"records no embedding model; drop the collection and reprocess "
                 f"embeddings to adopt model-locked storage (ADR 0001)"
             )
-        if not isinstance(config.params.vectors, dict):
+        vectors = config.params.vectors
+        if not isinstance(vectors, dict):
             raise ProviderConfigError(
                 f"vector collection {self.collection!r} predates named vectors and "
                 f"stores its embeddings under the old unnamed schema; drop the "
                 f"collection and reprocess embeddings to adopt named-vector "
                 f"storage (ADR 0001)"
+            )
+        if DENSE_VECTOR_NAME not in vectors:
+            # Named, but not with the vector this code reads and writes; without
+            # this the miss surfaces as an opaque "not existing vector name"
+            # error from the client, deep inside a write or a query.
+            defined = ", ".join(repr(name) for name in sorted(vectors)) or "none"
+            raise ProviderConfigError(
+                f"vector collection {self.collection!r} defines no {DENSE_VECTOR_NAME!r} "
+                f"vector (it defines {defined}); drop the collection and reprocess "
+                f"embeddings to adopt named-vector storage (ADR 0001)"
             )
         return str(locked_model)
 
