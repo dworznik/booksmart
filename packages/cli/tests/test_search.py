@@ -14,7 +14,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from booksmart_cli import reads
 from booksmart_cli.main import app
+from booksmart_cli.runtime import Runtime
 
 
 @pytest.fixture(autouse=True)
@@ -191,6 +193,26 @@ def test_search_leaves_the_embedded_qdrant_lock_free_for_the_next_command(
     assert second_code == 0, second_err
     reingest = runner.invoke(app, ["ingest", book_id, "--scope", "embeddings"])
     assert reingest.exit_code == 0, reingest.stdout + reingest.stderr
+
+
+def test_the_read_seam_carries_the_query_embedding_usage(
+    home: Path,
+    tmp_path: Path,
+    make_pdf: Callable[..., Path],
+    add_book: Callable[..., str],
+    ingest_book: Callable[[str], None],
+) -> None:
+    """The command renders hits only, but the seam under it reports what the
+    query cost — so a non-CLI consumer of reads.py can cost its search traffic
+    (issue #57). Nothing else in this file looks past the terminal surface."""
+    book_id = add_book(make_pdf(tmp_path / "book.pdf"))
+    ingest_book(book_id)
+
+    results = reads.semantic_search(Runtime.load(), "deep modules")
+
+    assert results.hits
+    # The fake embedding provider reports a truthful zero: no call was billed.
+    assert results.embedding_tokens == 0
 
 
 def _hit_rows(output: str) -> int:
