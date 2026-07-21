@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from booksmart_core.extraction import KNOWLEDGE_OBJECT_TYPES
 from booksmart_core.llm import build_embedding_provider
 from booksmart_core.models import Book, BookProfile, Chapter, KnowledgeObject, Run
-from booksmart_core.search import SearchHit
+from booksmart_core.search import SearchResults
 from booksmart_core.search import search as core_search
 from booksmart_core.vectors import (
     RECORD_TYPES,
@@ -171,14 +171,19 @@ def semantic_search(
     record_types: Sequence[str] | None = None,
     limit: int = 10,
     score_threshold: float | None = None,
-) -> list[SearchHit]:
+) -> SearchResults:
     """Rank embedded records against a natural-language query (no HTTP ancestor —
     this is the first post-split feature, issue #30).
 
     Validates the user's input before building any provider, so a typo'd book id
     or record type never demands an embedding API key. The embedded Qdrant client
     is closed on the way out: it holds a single-process lock on the on-disk
-    directory, and the next command has to be able to open it."""
+    directory, and the next command has to be able to open it.
+
+    Core's ``SearchResults`` is passed through whole rather than unwrapped to
+    ``.hits``: the `search` command renders hits only, but this is the read
+    layer, and dropping the query's usage here would put it out of reach of
+    anything else built on reads.py."""
     if not query.strip():
         raise CliError("Search query must not be empty")
     if limit < 1:

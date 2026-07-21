@@ -35,9 +35,14 @@ the same arguments against a served instance.
 ```python
 from booksmart_core.search import search
 
-hits = search(session, vector_store, embedder, "how do deep modules help?", limit=5)
+results = search(session, vector_store, embedder, "how do deep modules help?", limit=5)
+for hit in results.hits:
+    print(hit.score, hit.title)
+print(results.embedding_tokens)  # what the query cost; None if the provider withheld it
 ```
 
 It embeds the query with the collection's locked model (refusing a mismatch, ADR
 0001), ANN-searches Qdrant, and resolves each hit back to its detached ORM row.
+A search is one unbatched embedding call, so `embedding_tokens` is the only
+place a consumer costing search traffic can get that number.
 

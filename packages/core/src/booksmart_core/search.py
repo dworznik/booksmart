@@ -10,7 +10,9 @@ plausible, silently wrong rankings — the failure has no symptom an operator ca
 diagnose, so it is refused rather than served.
 
 This is the seam a server's HTTP search endpoint would reuse: it takes a session
-and an already-built vector store and embedder, and returns detached rows.
+and an already-built vector store and embedder, and returns detached rows plus
+the query embedding's usage — one unbatched call per query, so a consumer that
+costs its search traffic cannot get that number anywhere else.
 """
 
 import uuid
@@ -59,6 +61,30 @@ class SearchHit:
         return self.row.title
 
 
+@dataclass(frozen=True)
+class SearchResults:
+    """The ranked hits, plus what embedding the query cost.
+
+    A search is exactly one embedding call, unbatched, so a consumer costing
+    search traffic needs the number this carries — the read-side counterpart of
+    ``StageReport.embedding_tokens``.
+
+    ``embedding_tokens`` is what the query cost: the provider's count, or 0 when
+    no call was made at all (nothing is embedded yet, so no query was sent).
+    Those two are not distinguishable, and needn't be — both cost nothing.
+    ``None`` is the state that matters: the provider was asked and would not say.
+
+    It is ``int | None`` where ``StageReport.embedding_tokens`` is a plain
+    ``int``, deliberately. A Stage sums many batches, so one silent provider
+    among them can only ever make the total a lower bound; a search has exactly
+    one call to report, so "unknown" survives here instead of being rounded into
+    a number a consumer would then trust.
+    """
+
+    hits: list[SearchHit]
+    embedding_tokens: int | None
+
+
 def search(
     session: Session,
     vector_store: VectorStore,
@@ -70,23 +96,26 @@ def search(
     limit: int = 10,
     offset: int = 0,
     score_threshold: float | None = None,
-) -> list[SearchHit]:
-    """The most similar embedded records to ``query``, best first.
+) -> SearchResults:
+    """The most similar embedded records to ``query``, best first, and what
+    embedding the query cost.
 
     Scores are COSINE similarities: higher is closer, and ``score_threshold``
     keeps only hits scoring at least that much. Nothing embedded yet (no
     collection), or nothing matching the filters, is an empty result rather than
     an error — an un-ingested book is a normal state, not a failure.
 
-    Points whose relational row has since been deleted are skipped, so a result
-    may be shorter than ``limit``: Qdrant is a derived index, and the database
-    is the source of truth.
+    Points whose relational row has since been deleted are skipped, so
+    ``hits`` may be shorter than ``limit``: Qdrant is a derived index, and the
+    database is the source of truth.
     """
     _validate_record_types(record_types)
 
     locked_model = vector_store.verified_model()
     if locked_model is None:
-        return []  # nothing embedded yet; not worth embedding the query
+        # Nothing embedded yet; not worth embedding the query. No call was
+        # made, so the query cost 0 — not the None that means "we asked".
+        return SearchResults(hits=[], embedding_tokens=0)
     if locked_model != embedder.model:
         raise ProviderConfigError(
             f"vector collection {vector_store.collection!r} is locked to embedding model "
@@ -95,15 +124,17 @@ def search(
             f"(ADR 0001)"
         )
 
-    query_vector = embedder.embed([query]).vectors[0]
+    embedded = embedder.embed([query])
     points = vector_store.search(
-        query_vector,
+        embedded.vectors[0],
         query_filter=_build_filter(book_id, record_types),
         limit=limit,
         offset=offset,
         score_threshold=score_threshold,
     )
-    return _resolve(session, points)
+    return SearchResults(
+        hits=_resolve(session, points), embedding_tokens=embedded.input_tokens
+    )
 
 
 def _validate_record_types(record_types: Sequence[RecordType] | None) -> None:

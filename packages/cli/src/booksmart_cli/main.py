@@ -385,7 +385,7 @@ def search(
         record_types=type,
         limit=limit,
         score_threshold=score_threshold,
-    )
+    ).hits
     if not hits:
         console.print("No matches. Ingest a book first, or try a broader query.")
         return

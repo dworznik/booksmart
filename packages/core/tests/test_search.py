@@ -34,13 +34,29 @@ class QueryEmbedder:
     model = "stub-embed-1"
     max_batch = 100
 
+    # Fixed per-call usage so tests can assert an exact number.
+    INPUT_TOKENS_PER_CALL = 9
+
     def __init__(self, vector: list[float] | None = None) -> None:
         self.vector = vector or QUERY_VECTOR
         self.calls: list[list[str]] = []
 
     def embed(self, texts: list[str]) -> EmbeddingResponse:
         self.calls.append(list(texts))
-        return EmbeddingResponse(vectors=[list(self.vector) for _ in texts])
+        return EmbeddingResponse(
+            vectors=[list(self.vector) for _ in texts],
+            input_tokens=self.INPUT_TOKENS_PER_CALL,
+        )
+
+
+class SilentQueryEmbedder:
+    """Same vectors as QueryEmbedder, but reports no usage at all."""
+
+    model = "stub-embed-1"
+    max_batch = 100
+
+    def embed(self, texts: list[str]) -> EmbeddingResponse:
+        return EmbeddingResponse(vectors=[list(QUERY_VECTOR) for _ in texts])
 
 
 @pytest.fixture()
@@ -129,7 +145,7 @@ class TestRanking:
     ) -> None:
         with session_factory() as session:
             ids = seed(session, store, book_id)
-            hits = search(session, store, embedder, "deep modules")
+            hits = search(session, store, embedder, "deep modules").hits
 
         assert [hit.record_type for hit in hits] == ["chapter", "section", "knowledge_object"]
         assert [hit.record_id for hit in hits] == [
@@ -153,7 +169,7 @@ class TestRanking:
     ) -> None:
         with session_factory() as session:
             seed(session, store, book_id)
-            hits = search(session, store, embedder, "deep modules")
+            hits = search(session, store, embedder, "deep modules").hits
 
         chapter = hits[0].row
         assert isinstance(chapter, Chapter)
@@ -170,7 +186,7 @@ class TestRanking:
     ) -> None:
         with session_factory() as session:
             seed(session, store, book_id)
-            hits = search(session, store, embedder, "deep modules")
+            hits = search(session, store, embedder, "deep modules").hits
             # A later commit expires every row the session still holds; a hit that
             # was never detached would then try to refresh itself once the session
             # is gone, and raise DetachedInstanceError instead of rendering.
@@ -189,7 +205,7 @@ class TestRanking:
             ids = seed(session, store, book_id)
             session.delete(session.get(Chapter, ids["chapter"]))
             session.commit()
-            hits = search(session, store, embedder, "deep modules")
+            hits = search(session, store, embedder, "deep modules").hits
 
         # The chapter (and its cascaded section) are gone; only the object remains.
         assert [hit.record_type for hit in hits] == ["knowledge_object"]
@@ -207,7 +223,7 @@ class TestFilters:
             seed(session, store, book_id)
             hits = search(
                 session, store, embedder, "deep modules", record_types=["section", "chapter"]
-            )
+            ).hits
 
         assert [hit.record_type for hit in hits] == ["chapter", "section"]
 
@@ -232,7 +248,7 @@ class TestFilters:
         with session_factory() as session:
             seed(session, store, book_id)
             seed(session, store, other_id)
-            hits = search(session, store, embedder, "deep modules", book_id=other_id)
+            hits = search(session, store, embedder, "deep modules", book_id=other_id).hits
 
         assert len(hits) == 3
         assert {hit.book_id for hit in hits} == {other_id}
@@ -246,7 +262,7 @@ class TestFilters:
     ) -> None:
         with session_factory() as session:
             seed(session, store, book_id)
-            hits = search(session, store, embedder, "deep modules", score_threshold=0.5)
+            hits = search(session, store, embedder, "deep modules", score_threshold=0.5).hits
 
         assert [hit.record_type for hit in hits] == ["chapter", "section"]
 
@@ -259,8 +275,8 @@ class TestFilters:
     ) -> None:
         with session_factory() as session:
             seed(session, store, book_id)
-            first = search(session, store, embedder, "deep modules", limit=1)
-            second = search(session, store, embedder, "deep modules", limit=1, offset=1)
+            first = search(session, store, embedder, "deep modules", limit=1).hits
+            second = search(session, store, embedder, "deep modules", limit=1, offset=1).hits
 
         assert [hit.record_type for hit in first] == ["chapter"]
         assert [hit.record_type for hit in second] == ["section"]
@@ -328,7 +344,7 @@ class TestEmptyStore:
         embedder: QueryEmbedder,
     ) -> None:
         with session_factory() as session:
-            hits = search(session, store, embedder, "deep modules")
+            hits = search(session, store, embedder, "deep modules").hits
 
         assert hits == []
         # Nothing to search: the query is never embedded.
@@ -344,9 +360,60 @@ class TestEmptyStore:
         other = uuid.uuid4()
         with session_factory() as session:
             seed(session, store, book_id)
-            hits = search(session, store, embedder, "deep modules", book_id=other)
+            results = search(session, store, embedder, "deep modules", book_id=other)
 
-        assert hits == []
+        assert results.hits == []
+        # No hits, but the query was still embedded and still cost something —
+        # the empty result here must not be confused with the empty result of a
+        # search that never embedded anything (see TestQueryEmbeddingUsage).
+        assert results.embedding_tokens == QueryEmbedder.INPUT_TOKENS_PER_CALL
+
+
+class TestQueryEmbeddingUsage:
+    """A search costs exactly one embedding call, and says what it cost."""
+
+    def test_results_report_the_usage_the_embedder_reported(
+        self,
+        session_factory: sessionmaker[Session],
+        store: VectorStore,
+        embedder: QueryEmbedder,
+        book_id: uuid.UUID,
+    ) -> None:
+        with session_factory() as session:
+            seed(session, store, book_id)
+            results = search(session, store, embedder, "deep modules")
+
+        assert results.hits
+        assert results.embedding_tokens == QueryEmbedder.INPUT_TOKENS_PER_CALL
+
+    def test_usage_the_provider_withholds_stays_unknown(
+        self,
+        session_factory: sessionmaker[Session],
+        store: VectorStore,
+        book_id: uuid.UUID,
+    ) -> None:
+        with session_factory() as session:
+            seed(session, store, book_id)
+            results = search(session, store, SilentQueryEmbedder(), "deep modules")
+
+        assert results.hits
+        assert results.embedding_tokens is None
+
+    def test_a_search_that_never_embeds_spent_nothing(
+        self,
+        session_factory: sessionmaker[Session],
+        store: VectorStore,
+        embedder: QueryEmbedder,
+    ) -> None:
+        # No collection: search returns early without embedding. Zero is the
+        # honest answer — nothing was billed — and it is not the None that
+        # means "we called and the provider would not say".
+        with session_factory() as session:
+            results = search(session, store, embedder, "deep modules")
+
+        assert results.hits == []
+        assert results.embedding_tokens == 0
+        assert embedder.calls == []
 
 
 def test_search_hit_is_immutable(
@@ -357,7 +424,7 @@ def test_search_hit_is_immutable(
 ) -> None:
     with session_factory() as session:
         seed(session, store, book_id)
-        hit = search(session, store, embedder, "deep modules")[0]
+        hit = search(session, store, embedder, "deep modules").hits[0]
 
     assert isinstance(hit, SearchHit)
     with pytest.raises(AttributeError):
