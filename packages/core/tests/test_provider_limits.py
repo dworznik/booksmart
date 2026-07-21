@@ -25,15 +25,64 @@ from booksmart_core.llm import (
 
 
 class TestLLMLimitResolution:
-    def test_known_gemini_models_resolve_per_model_limits(self) -> None:
-        flash = GeminiProvider(model="gemini-2.5-flash", api_key="test")
-        pro = GeminiProvider(model="gemini-2.5-pro", api_key="test")
+    def test_current_gemini_tiers_resolve_from_the_table_not_the_vendor_default(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The point of #53: the tiers callers now select were absent, so they
+        # fell through to a default that under-reported output by half and
+        # warned on every run.
+        with caplog.at_level(logging.WARNING, logger="booksmart_core.llm"):
+            flash_lite = GeminiProvider(model="gemini-3.1-flash-lite", api_key="test")
+            pro = GeminiProvider(model="gemini-3.1-pro-preview", api_key="test")
+            flash = GeminiProvider(model="gemini-3.5-flash", api_key="test")
 
+        assert flash_lite.max_output_tokens == 65536
+        assert pro.max_output_tokens == 65536
         assert flash.max_output_tokens == 65536
-        assert flash.valid_reasoning_efforts is not None
-        assert "none" in flash.valid_reasoning_efforts
-        assert pro.valid_reasoning_efforts is not None
-        assert "none" not in pro.valid_reasoning_efforts
+        assert caplog.records == []
+
+    def test_gemini_flash_tiers_accept_every_effort_the_endpoint_allows(self) -> None:
+        full_range = ("none", "minimal", "low", "medium", "high")
+
+        for model in ("gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"):
+            provider = GeminiProvider(model=model, api_key="test")
+
+            assert provider.valid_reasoning_efforts == full_range
+
+    def test_gemini_pro_tier_takes_neither_none_nor_minimal(self) -> None:
+        # 3.1 Pro is stricter than the 2.5 Pro it replaces: that one refused
+        # only "none", this one has no thinking level below "low" either.
+        pro = GeminiProvider(model="gemini-3.1-pro-preview", api_key="test")
+
+        assert pro.valid_reasoning_efforts == ("low", "medium", "high")
+
+    def test_retired_gemini_model_falls_back_to_the_vendor_default_with_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The table holds live models only. gemini-2.5-pro was removed once the
+        # API started answering 404 for it, so it now resolves like any id the
+        # table has never heard of — a guess, said out loud.
+        with caplog.at_level(logging.WARNING, logger="booksmart_core.llm"):
+            provider = GeminiProvider(model="gemini-2.5-pro", api_key="test")
+
+        assert provider.max_output_tokens == 32000
+        assert provider.valid_reasoning_efforts is None
+        assert any("gemini-2.5-pro" in record.message for record in caplog.records)
+
+    def test_the_gemini_default_model_is_one_the_table_knows(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Selecting the provider without naming a model must not land on an id
+        # the API has retired — which is what the old gemini-2.5-pro default did.
+        settings = Settings(llm_provider="gemini", gemini_api_key="test")
+
+        with caplog.at_level(logging.WARNING, logger="booksmart_core.llm"):
+            provider = build_llm_provider(settings)
+
+        assert isinstance(provider, GeminiProvider)
+        assert provider.max_output_tokens == 65536
+        assert provider.valid_reasoning_efforts is not None
+        assert caplog.records == []
 
     def test_known_anthropic_model_resolves_max_output_tokens(self) -> None:
         # The SDK's non-streaming ceiling, not the model's 128k API cap.
@@ -159,12 +208,47 @@ class TestLLMLimitResolution:
 class TestReasoningEffortValidation:
     def test_invalid_effort_for_known_model_raises_naming_both_sides(self) -> None:
         with pytest.raises(ProviderConfigError) as excinfo:
-            GeminiProvider(model="gemini-2.5-pro", api_key="test", reasoning_effort="none")
+            GeminiProvider(
+                model="gemini-3.1-pro-preview", api_key="test", reasoning_effort="none"
+            )
 
         message = str(excinfo.value)
         assert "'none'" in message
-        assert "gemini-2.5-pro" in message
-        assert "minimal, low, medium, high" in message
+        assert "gemini-3.1-pro-preview" in message
+        assert "low, medium, high" in message
+
+    def test_minimal_is_rejected_on_the_gemini_pro_tier(self) -> None:
+        # The test above covers "none"; "minimal" is the value 3.1 Pro dropped
+        # that 2.5 Pro allowed ("Thinking level MINIMAL is not supported for
+        # this model."), so porting the old tuple forward would have missed it.
+        with pytest.raises(ProviderConfigError) as excinfo:
+            GeminiProvider(
+                model="gemini-3.1-pro-preview", api_key="test", reasoning_effort="minimal"
+            )
+
+        assert "'minimal'" in str(excinfo.value)
+
+    def test_xhigh_is_rejected_on_every_gemini_tier(self) -> None:
+        # "Valid values are: high, low, medium, minimal, none" — the compat
+        # endpoint's own enumeration has no xhigh; that one is OpenAI's alone.
+        for model in ("gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.1-pro-preview"):
+            with pytest.raises(ProviderConfigError) as excinfo:
+                GeminiProvider(model=model, api_key="test", reasoning_effort="xhigh")
+
+            assert "'xhigh'" in str(excinfo.value)
+
+    def test_efforts_the_current_gemini_tiers_accept_are_accepted(self) -> None:
+        # The other half of validation: a Preference the model does take must
+        # survive construction rather than being rejected with its neighbours.
+        flash_lite = GeminiProvider(
+            model="gemini-3.1-flash-lite", api_key="test", reasoning_effort="none"
+        )
+        pro = GeminiProvider(
+            model="gemini-3.1-pro-preview", api_key="test", reasoning_effort="low"
+        )
+
+        assert flash_lite.reasoning_effort == "none"
+        assert pro.reasoning_effort == "low"
 
     def test_valid_effort_for_known_model_is_accepted(self) -> None:
         provider = GeminiProvider(
@@ -208,7 +292,7 @@ class TestReasoningEffortValidation:
     def test_build_llm_provider_surfaces_construction_time_validation(self) -> None:
         settings = Settings(
             llm_provider="gemini",
-            llm_model="gemini-2.5-pro",
+            llm_model="gemini-3.1-pro-preview",
             llm_reasoning_effort="none",
             gemini_api_key="test",
         )

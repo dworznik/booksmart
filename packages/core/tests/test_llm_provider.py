@@ -51,7 +51,7 @@ class TestProviderSelection:
         provider = build_llm_provider(make_settings(llm_provider="gemini"))
 
         assert isinstance(provider, GeminiProvider)
-        assert provider.model == "gemini-2.5-pro"
+        assert provider.model == "gemini-3.5-flash"
         assert str(provider._client.base_url) == GEMINI_BASE_URL
 
     def test_configured_model_overrides_provider_default(self) -> None:
@@ -95,7 +95,7 @@ class TestProviderSelection:
         provider = build_llm_provider(
             make_settings(
                 llm_provider="gemini",
-                llm_model="gemini-2.5-flash",  # 2.5 Pro rejects "none"
+                llm_model="gemini-2.5-flash",  # the pro tiers reject "none"
                 llm_reasoning_effort="none",
             )
         )

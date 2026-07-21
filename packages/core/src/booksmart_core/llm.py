@@ -48,7 +48,9 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 DEFAULT_MODELS = {
     "anthropic": "claude-opus-4-8",
     "openai": "gpt-5.5",
-    "gemini": "gemini-2.5-pro",
+    # A stable id, not a preview one: this is what a deployment gets when it
+    # names no model, so it should be the entry least likely to move under it.
+    "gemini": "gemini-3.5-flash",
     # Deterministic canned responses, no keys or network (CI, local dev).
     "fake": "fake-llm-1",
 }
@@ -123,16 +125,42 @@ _OPENAI_LLM_LIMITS = {
 }
 _OPENAI_LLM_DEFAULT = LLMLimits(max_output_tokens=32000)
 
+# Gemini's roster churns faster than a frontier-only table can track, and an id
+# it retires stops answering rather than degrading: gemini-2.5-pro (in this
+# table until #53) and gemini-2.5-flash-lite both return 404 "no longer
+# available to new users". So every entry here is one a live call answered on
+# the probe date; retired ids are removed rather than kept as history, which
+# leaves them resolving to the vendor default with the usual warning.
+# All current models share the same 65536 output Limit (models.list
+# outputTokenLimit, probed 2026-07-21 — see docs/research/gemini-llm-limits.md).
 _GEMINI_LLM_LIMITS = {
-    # Thinking cannot be turned off on 2.5 Pro: it rejects "none" but accepts
-    # "minimal" (a 1024-token thinking budget); Flash accepts both.
-    "gemini-2.5-pro": LLMLimits(
+    # The flash tiers accept every effort the compat endpoint defines. The
+    # endpoint's own rejection message enumerates that universe: "Valid values
+    # are: high, low, medium, minimal, none" — note it has no "xhigh", which is
+    # OpenAI's alone.
+    "gemini-3.1-flash-lite": LLMLimits(
         max_output_tokens=65536,
-        valid_reasoning_efforts=("minimal", "low", "medium", "high"),
+        valid_reasoning_efforts=("none", "minimal", "low", "medium", "high"),
     ),
+    "gemini-3.5-flash": LLMLimits(
+        max_output_tokens=65536,
+        valid_reasoning_efforts=("none", "minimal", "low", "medium", "high"),
+    ),
+    # Still answering, but the next row to fall: the vendor gives it a shutdown
+    # date of 2026-10-16 (earliest possible) and names gemini-3.5-flash as its
+    # replacement — which is why that is the default above.
     "gemini-2.5-flash": LLMLimits(
         max_output_tokens=65536,
         valid_reasoning_efforts=("none", "minimal", "low", "medium", "high"),
+    ),
+    # The pro tier cannot stop thinking, and 3.1 Pro is stricter about it than
+    # the 2.5 Pro it replaces: that one refused only "none", this one has no
+    # thinking level below "low" either ("Budget 0 is invalid. This model only
+    # works in thinking mode." / "Thinking level MINIMAL is not supported for
+    # this model."). A preview id, so these numbers are the more refreshable.
+    "gemini-3.1-pro-preview": LLMLimits(
+        max_output_tokens=65536,
+        valid_reasoning_efforts=("low", "medium", "high"),
     ),
 }
 _GEMINI_LLM_DEFAULT = LLMLimits(max_output_tokens=32000)
