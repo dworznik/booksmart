@@ -2,6 +2,13 @@
 
 # Knowledge Repository --- Book Ingestion Pipeline (v1)
 
+> **Frozen at [`b4f442a`](https://github.com/dworznik/booksmart/tree/b4f442a)**
+> (2026-07-03): the requirements v1 was built against, kept as the record of what
+> was asked for. It predates the workspace split and the removal of the HTTP
+> server, so its surfaces and schemas are not the ones the code has now — read
+> `CONTEXT.md` and `docs/adr/` for what holds today (see
+> [`docs/agents/domain.md`](../agents/domain.md#living-docs-vs-frozen-docs)).
+
 ## Purpose
 
 Build a reproducible ingestion pipeline that imports technical and
