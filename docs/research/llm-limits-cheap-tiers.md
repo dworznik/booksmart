@@ -6,6 +6,12 @@
 > `claude-haiku-4-5` fall through `resolve_limits()` to a guessed vendor default.
 > This establishes the two `LLMLimits` fields for those three models from vendor
 > primary sources, and re-checks the existing entries against the same sources.
+>
+> **Frozen at [`fe99e43`](https://github.com/dworznik/booksmart/tree/fe99e43)**
+> (2026-07-21), the commit that merged this research with its implementation.
+> Vendor facts are true as of that date and are not re-verified as models ship —
+> read the tables in `llm.py` for what the code enforces (see
+> [`docs/agents/domain.md`](../agents/domain.md#living-docs-vs-frozen-docs)).
 
 ## Summary
 

@@ -10,6 +10,34 @@ How the engineering skills should consume this repo's domain documentation when 
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
 
+## Living docs vs frozen docs
+
+Not every document under `docs/` tracks the code, and reading a frozen one as
+current is how stale API shapes get copied into new work.
+
+**Living** — must stay true, and a change that contradicts one is a bug in the
+change or a reason to amend the doc:
+
+- `CONTEXT.md` — the glossary.
+- `docs/adr/` — decisions. Superseding an ADR means writing the next ADR, never
+  editing the old one's decision.
+
+**Frozen** — a record of what was known at one moment, correct as of the commit
+it pins and not maintained afterwards. Every file in these trees carries a pin
+banner naming that commit:
+
+- `docs/research/` — pre-implementation research: primary-source vendor facts and
+  a recommended shape, gathered before an issue was implemented.
+- `docs/api-notes/` — what the removed HTTP surface did, for a consumer
+  reimplementing it.
+- `docs/prds/` — the product requirements a version was built against.
+
+Do **not** refresh a frozen doc's code snippets when a seam moves — that erases
+the record of what was actually known then, and buys nothing the code doesn't
+already say. Read the code for the current shape; read these for the reasoning.
+If a frozen doc's conclusion is now wrong (not merely dated), say so in the
+issue or ADR that supersedes it.
+
 ## File structure
 
 Single-context repo (most repos):

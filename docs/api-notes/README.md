@@ -14,7 +14,9 @@ memory.
 
 **Pre-refactor revision:** everything below lived under `app/` at
 [`589857c`](https://github.com/dworznik/booksmart/tree/589857c) (the commit this
-PR branched from). Permalinks pin that SHA.
+PR branched from). Permalinks pin that SHA. This whole tree is frozen at it and
+is not refreshed as the code moves (see
+[`docs/agents/domain.md`](../agents/domain.md#living-docs-vs-frozen-docs)).
 
 | Removed unit | Notes |
 | --- | --- |

@@ -3,6 +3,14 @@
 > This is a new notes location, `docs/research/`, sitting alongside
 > `docs/adr/`, `docs/api-notes/`, and `docs/prds/`. It holds pre-implementation
 > research: primary-source facts and a recommended shape, not a decision record.
+>
+> **Frozen at [`8a0f856`](https://github.com/dworznik/booksmart/tree/8a0f856)**
+> (2026-07-10), the commit that merged this research with its implementation.
+> Code snippets show the seams as they stood then and are not refreshed when
+> those seams move — read the code for the current shape (see
+> [`docs/agents/domain.md`](../agents/domain.md#living-docs-vs-frozen-docs)).
+> Known drift: `EmbeddingProvider.embed()` now returns an `EmbeddingResponse`,
+> so the query vector is `embedder.embed([query]).vectors[0]` (issue #51).
 
 ## Summary
 
