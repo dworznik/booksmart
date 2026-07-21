@@ -179,7 +179,8 @@ class TestOpenAIEmbeddingProvider:
                 data=[
                     SimpleNamespace(index=1, embedding=[2.0, 2.0]),
                     SimpleNamespace(index=0, embedding=[1.0, 1.0]),
-                ]
+                ],
+                usage=SimpleNamespace(prompt_tokens=12),
             )
 
         provider = OpenAIEmbeddingProvider(
@@ -189,11 +190,44 @@ class TestOpenAIEmbeddingProvider:
             ),
         )
 
-        vectors = provider.embed(["first", "second"])
+        response = provider.embed(["first", "second"])
 
-        assert vectors == [[1.0, 1.0], [2.0, 2.0]]
+        assert response.vectors == [[1.0, 1.0], [2.0, 2.0]]
         assert captured["model"] == "text-embedding-3-small"
         assert captured["input"] == ["first", "second"]
+
+    def test_embed_reports_the_prompt_tokens_the_api_returns(self) -> None:
+        def fake_create(**kwargs: Any) -> Any:
+            return SimpleNamespace(
+                data=[SimpleNamespace(index=0, embedding=[1.0, 1.0])],
+                usage=SimpleNamespace(prompt_tokens=42),
+            )
+
+        provider = OpenAIEmbeddingProvider(
+            model="text-embedding-3-small",
+            client=SimpleNamespace(  # type: ignore[arg-type]
+                embeddings=SimpleNamespace(create=fake_create)
+            ),
+        )
+
+        assert provider.embed(["first"]).input_tokens == 42
+
+    def test_embed_reports_unknown_usage_as_none(self) -> None:
+        # OpenAI marks usage required on this response, but the same provider
+        # class serves Gemini's compat endpoint, which may omit it.
+        def fake_create(**kwargs: Any) -> Any:
+            return SimpleNamespace(
+                data=[SimpleNamespace(index=0, embedding=[1.0, 1.0])], usage=None
+            )
+
+        provider = OpenAIEmbeddingProvider(
+            model="text-embedding-3-small",
+            client=SimpleNamespace(  # type: ignore[arg-type]
+                embeddings=SimpleNamespace(create=fake_create)
+            ),
+        )
+
+        assert provider.embed(["first"]).input_tokens is None
 
 
 class TestFakeProvider:
@@ -256,11 +290,16 @@ class TestFakeProvider:
     def test_fake_embeddings_are_deterministic_fixed_size_vectors(self) -> None:
         provider = build_embedding_provider(Settings(embedding_provider="fake"))
 
-        first = provider.embed(["alpha", "a longer text"])
-        second = provider.embed(["alpha", "a longer text"])
+        first = provider.embed(["alpha", "a longer text"]).vectors
+        second = provider.embed(["alpha", "a longer text"]).vectors
 
         assert first == second
         assert {len(vector) for vector in first} == {8}
+
+    def test_fake_embedding_provider_reports_zero_token_usage(self) -> None:
+        provider = build_embedding_provider(Settings(embedding_provider="fake"))
+
+        assert provider.embed(["alpha"]).input_tokens == 0
 
 
 class TestAnthropicProvider:

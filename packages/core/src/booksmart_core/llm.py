@@ -332,11 +332,25 @@ class GeminiProvider(OpenAIProvider):
         )
 
 
+@dataclass(frozen=True)
+class EmbeddingResponse:
+    """One batch of vectors plus what the endpoint billed for producing them.
+
+    The embeddings side of LLMResponse: usage the provider reports is ground
+    truth a consumer needs to cost a run, and embedding calls outnumber
+    completion calls by far, so dropping it makes any cost estimate a guess.
+    ``input_tokens`` is None only when the provider genuinely reported nothing
+    — never an estimate of our own."""
+
+    vectors: list[list[float]]
+    input_tokens: int | None = None
+
+
 class EmbeddingProvider(Protocol):
     model: str
     max_batch: int
 
-    def embed(self, texts: list[str]) -> list[list[float]]: ...
+    def embed(self, texts: list[str]) -> EmbeddingResponse: ...
 
 
 class OpenAIEmbeddingProvider:
@@ -359,9 +373,18 @@ class OpenAIEmbeddingProvider:
         self.embedding_dimensions = limits.embedding_dimensions
         self._client = client or openai.OpenAI(api_key=api_key, base_url=base_url)
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str]) -> EmbeddingResponse:
         response = self._client.embeddings.create(model=self.model, input=texts)
-        return [item.embedding for item in sorted(response.data, key=lambda item: item.index)]
+        # OpenAI marks usage required on this response and the SDK types it
+        # non-optionally, but the SDK parses responses leniently (an omitted
+        # field reads back as None) and this class also serves Gemini's compat
+        # endpoint, which is free to omit it. Hence the None branch the type
+        # says is unreachable.
+        usage = response.usage
+        return EmbeddingResponse(
+            vectors=[item.embedding for item in sorted(response.data, key=lambda item: item.index)],
+            input_tokens=usage.prompt_tokens if usage else None,
+        )
 
 
 class GeminiEmbeddingProvider(OpenAIEmbeddingProvider):

@@ -14,6 +14,7 @@ from qdrant_client import models as qmodels
 from sqlalchemy.orm import Session, sessionmaker
 
 from booksmart_core.errors import ProviderConfigError
+from booksmart_core.llm import EmbeddingResponse
 from booksmart_core.models import Book, Chapter, KnowledgeObject, Section
 from booksmart_core.search import SearchHit, search
 from booksmart_core.vectors import RecordType, VectorRecord, VectorStore
@@ -37,9 +38,9 @@ class QueryEmbedder:
         self.vector = vector or QUERY_VECTOR
         self.calls: list[list[str]] = []
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str]) -> EmbeddingResponse:
         self.calls.append(list(texts))
-        return [list(self.vector) for _ in texts]
+        return EmbeddingResponse(vectors=[list(self.vector) for _ in texts])
 
 
 @pytest.fixture()

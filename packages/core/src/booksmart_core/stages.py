@@ -33,7 +33,7 @@ from booksmart_core.extraction import (
     parse_extraction_response,
     resolve_source,
 )
-from booksmart_core.llm import EmbeddingProvider, LLMProvider, LLMResponse
+from booksmart_core.llm import EmbeddingProvider, EmbeddingResponse, LLMProvider, LLMResponse
 from booksmart_core.models import Book, BookProfile, Chapter, KnowledgeObject, Section
 from booksmart_core.parsing import ParserChain
 from booksmart_core.profile import PROFILE_PROMPT_VERSION, PROFILE_SYSTEM_PROMPT, build_profile_prompt
@@ -62,12 +62,19 @@ class StageReport:
     Frozen and self-contained: it replaces the mutable ``log`` callback and
     ``TokenUsage`` the poll-worker threaded through every stage. Token counts
     are honest lower bounds — a provider that reports no usage contributes
-    zero and logs '?'."""
+    zero and logs '?'.
+
+    Embedding tokens are counted apart from ``input_tokens`` rather than added
+    to it: they are billed at a different rate, so a consumer costing a run
+    needs the two totals separately. Where they end up is the Runner's call —
+    the Run row this repo's Runner writes has no column for them yet, so today
+    they reach a consumer through the report and the run log."""
 
     stage: Stage
     log_lines: tuple[str, ...] = ()
     input_tokens: int = 0
     output_tokens: int = 0
+    embedding_tokens: int = 0
     counts: Mapping[str, int] = field(default_factory=dict)
 
 
@@ -83,6 +90,7 @@ class _ReportBuilder:
         self._log_lines: list[str] = []
         self.input_tokens = 0
         self.output_tokens = 0
+        self.embedding_tokens = 0
         self.counts: dict[str, int] = {}
 
     def log(self, line: str) -> None:
@@ -97,12 +105,18 @@ class _ReportBuilder:
             f"out={_show_count(response.output_tokens)}"
         )
 
+    def add_embedding_usage(self, response: EmbeddingResponse) -> str:
+        """Accumulate one embedding batch's usage; returns its log fragment."""
+        self.embedding_tokens += response.input_tokens or 0
+        return f"tokens in={_show_count(response.input_tokens)}"
+
     def finish(self) -> StageReport:
         return StageReport(
             stage=self.stage,
             log_lines=tuple(self._log_lines),
             input_tokens=self.input_tokens,
             output_tokens=self.output_tokens,
+            embedding_tokens=self.embedding_tokens,
             counts=dict(self.counts),
         )
 
@@ -386,7 +400,10 @@ def run_embeddings(
     embedded_vectors: list[list[float]] = []
     # Batch size is the provider's Limit for its model, never a caller guess.
     for start in range(0, len(texts), embedder.max_batch):
-        embedded_vectors.extend(embedder.embed(texts[start : start + embedder.max_batch]))
+        batch = texts[start : start + embedder.max_batch]
+        response = embedder.embed(batch)
+        embedded_vectors.extend(response.vectors)
+        builder.log(f"embeddings: batch of {len(batch)} {builder.add_embedding_usage(response)}")
     embedded_at = datetime.now(UTC)
     records: list[VectorRecord] = []
     for (row, record_type, text), vector in zip(items, embedded_vectors, strict=True):

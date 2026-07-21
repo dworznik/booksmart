@@ -9,7 +9,13 @@ the stage's parser expects.
 import json
 
 from booksmart_core.extraction import EXTRACTION_SYSTEM_PROMPT
-from booksmart_core.llm import EmbeddingLimits, LLMLimits, LLMResponse, resolve_limits
+from booksmart_core.llm import (
+    EmbeddingLimits,
+    EmbeddingResponse,
+    LLMLimits,
+    LLMResponse,
+    resolve_limits,
+)
 from booksmart_core.profile import PROFILE_SYSTEM_PROMPT
 from booksmart_core.summaries import SUMMARY_SYSTEM_PROMPT
 
@@ -80,10 +86,14 @@ class FakeEmbeddingProvider:
         self.max_batch = limits.max_batch
         self.embedding_dimensions = limits.embedding_dimensions
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str]) -> EmbeddingResponse:
         """Fixed-size vectors derived from text length: deterministic, and
-        distinct texts usually get distinct vectors."""
-        return [
-            [float((len(text) + position) % 7 + 1) for position in range(FAKE_EMBEDDING_SIZE)]
-            for text in texts
-        ]
+        distinct texts usually get distinct vectors. Usage is a truthful zero —
+        nothing was billed — matching FakeLLMProvider."""
+        return EmbeddingResponse(
+            vectors=[
+                [float((len(text) + position) % 7 + 1) for position in range(FAKE_EMBEDDING_SIZE)]
+                for text in texts
+            ],
+            input_tokens=0,
+        )
