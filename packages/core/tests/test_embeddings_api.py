@@ -9,8 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from booksmart_core.config import Settings
+from booksmart_core.llm import EmbeddingProvider, EmbeddingResponse
 from booksmart_core.models import Chapter, KnowledgeObject, Section
 from booksmart_core.runner import execute_run
+from booksmart_core.stages import StageReport, run_embeddings
 from booksmart_core.storage import BookStorage
 from booksmart_core.summaries import SUMMARY_SYSTEM_PROMPT
 from booksmart_core.vectors import COLLECTION_NAME, VectorStore
@@ -52,8 +54,46 @@ class ExplodingEmbedder:
     model = "exploding-embed"
     max_batch = 100
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str]) -> EmbeddingResponse:
         raise RuntimeError("embedding service down")
+
+
+class SilentEmbedder:
+    """Reports no usage at all. Same model and vector shape as the stub, so it
+    can re-embed a collection the stub locked (ADR 0001)."""
+
+    model = "stub-embed-1"
+    max_batch = 100
+
+    def embed(self, texts: list[str]) -> EmbeddingResponse:
+        return EmbeddingResponse(vectors=[[1.0, 1.0, 0.5] for _ in texts])
+
+
+def embedded_book(
+    session_factory: sessionmaker[Session],
+    settings: Settings,
+    storage: BookStorage,
+    stub_llm: StubLLMProvider,
+) -> uuid.UUID:
+    """A fully ingested book, ready for the embeddings stage to be re-run."""
+    book_id = register_book_with_hints(session_factory, storage)
+    prime_extraction(stub_llm)
+    prime_summaries(stub_llm)
+    ingest(session_factory, settings, book_id)
+    return uuid.UUID(book_id)
+
+
+def embed_again(
+    session_factory: sessionmaker[Session],
+    book_id: uuid.UUID,
+    embedder: EmbeddingProvider,
+    vector_store: VectorStore,
+) -> StageReport:
+    """Re-run the embeddings stage alone, as a Runner would, for its report."""
+    with session_factory() as session:
+        return run_embeddings(
+            session, book_id, embedder=embedder, vector_store=vector_store
+        )
 
 
 class TestEmbeddingStage:
@@ -332,3 +372,57 @@ class TestEmbeddingStage:
         assert "Modules should be deep." in batch  # chapter summary
         assert "About deep modules." in batch  # section summary
         assert any("Deep modules" in text for text in batch)  # knowledge object
+
+
+class TestEmbeddingUsageReporting:
+    """The provider reports what the embeddings endpoint billed; the stage
+    reports it onward, separately from LLM tokens — the two are priced apart."""
+
+    def test_report_sums_the_embedding_tokens_across_batches(
+        self,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        storage: BookStorage,
+        stub_llm: StubLLMProvider,
+        stub_embedder: StubEmbeddingProvider,
+        vector_store: VectorStore,
+    ) -> None:
+        book_id = embedded_book(session_factory, settings, storage, stub_llm)
+        stub_embedder.max_batch = 3  # the total must survive batching
+
+        report = embed_again(session_factory, book_id, stub_embedder, vector_store)
+
+        # 8 embeddable records, each reporting a fixed per-text usage.
+        assert report.embedding_tokens == 8 * StubEmbeddingProvider.INPUT_TOKENS_PER_TEXT
+
+    def test_embedding_tokens_are_not_counted_as_llm_tokens(
+        self,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        storage: BookStorage,
+        stub_llm: StubLLMProvider,
+        stub_embedder: StubEmbeddingProvider,
+        vector_store: VectorStore,
+    ) -> None:
+        book_id = embedded_book(session_factory, settings, storage, stub_llm)
+
+        report = embed_again(session_factory, book_id, stub_embedder, vector_store)
+
+        assert report.embedding_tokens > 0
+        assert report.input_tokens == 0
+        assert report.output_tokens == 0
+
+    def test_unreported_usage_counts_as_zero_and_logs_unknown(
+        self,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        storage: BookStorage,
+        stub_llm: StubLLMProvider,
+        vector_store: VectorStore,
+    ) -> None:
+        book_id = embedded_book(session_factory, settings, storage, stub_llm)
+
+        report = embed_again(session_factory, book_id, SilentEmbedder(), vector_store)
+
+        assert report.embedding_tokens == 0
+        assert any("tokens in=?" in line for line in report.log_lines)

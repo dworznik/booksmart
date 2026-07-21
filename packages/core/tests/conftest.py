@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from booksmart_core import MIGRATIONS_PATH
 from booksmart_core.config import Settings
 from booksmart_core.extraction import EXTRACTION_SYSTEM_PROMPT
-from booksmart_core.llm import LLMResponse
+from booksmart_core.llm import EmbeddingResponse, LLMResponse
 from booksmart_core.models import Base, Book, BookProfile, Chapter, KnowledgeObject, Run
 from booksmart_core.runner import execute_run
 from booksmart_core.storage import BookStorage, hash_stream
@@ -365,13 +365,19 @@ class StubEmbeddingProvider:
 
     model = "stub-embed-1"
 
+    # Fixed per-text usage so tests can assert exact accumulated totals.
+    INPUT_TOKENS_PER_TEXT = 25
+
     def __init__(self) -> None:
         self.max_batch = 100  # a Limit in the real providers; overridable per test
         self.batches: list[list[str]] = []
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str]) -> EmbeddingResponse:
         self.batches.append(list(texts))
-        return [[float(len(text) % 5 + 1), 1.0, 0.5] for text in texts]
+        return EmbeddingResponse(
+            vectors=[[float(len(text) % 5 + 1), 1.0, 0.5] for text in texts],
+            input_tokens=self.INPUT_TOKENS_PER_TEXT * len(texts),
+        )
 
 
 @pytest.fixture()

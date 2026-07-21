@@ -95,7 +95,7 @@ def search(
             f"(ADR 0001)"
         )
 
-    query_vector = embedder.embed([query])[0]
+    query_vector = embedder.embed([query]).vectors[0]
     points = vector_store.search(
         query_vector,
         query_filter=_build_filter(book_id, record_types),
