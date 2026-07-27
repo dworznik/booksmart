@@ -403,14 +403,23 @@ class OpenAIEmbeddingProvider:
 
     def embed(self, texts: list[str]) -> EmbeddingResponse:
         response = self._client.embeddings.create(model=self.model, input=texts)
-        # OpenAI marks usage required on this response and the SDK types it
-        # non-optionally, but the SDK parses responses leniently (an omitted
-        # field reads back as None) and this class also serves Gemini's compat
-        # endpoint, which is free to omit it. Hence the None branch the type
-        # says is unreachable.
+        # The SDK parses responses leniently — an omitted field reads back as
+        # None even where the type says it cannot be — and this class also
+        # serves Gemini's compat endpoint, which fronts a protobuf backend.
+        # proto3 JSON omits any field equal to its default, so the first item
+        # arrives with no `index` (0) and the batch reports no `usage` at all.
+        # Hence the two None branches the types say are unreachable.
+        items = list(response.data)
+        if all(item.index is not None for item in items):
+            # Only the provider's own numbering can pair a vector with the text
+            # that produced it, so keep the sort wherever it is available. One
+            # missing index makes the numbering untrustworthy for the whole
+            # batch; then we fall back to the response order, which both
+            # endpoints answer in.
+            items.sort(key=lambda item: item.index)
         usage = response.usage
         return EmbeddingResponse(
-            vectors=[item.embedding for item in sorted(response.data, key=lambda item: item.index)],
+            vectors=[item.embedding for item in items],
             input_tokens=usage.prompt_tokens if usage else None,
         )
 

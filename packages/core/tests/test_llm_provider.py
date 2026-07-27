@@ -168,26 +168,42 @@ class TestEmbeddingProviderSelection:
             build_embedding_provider(make_settings(openai_api_key=None))
 
 
+def embedding_client(
+    data: list[Any], usage: Any = None, captured: dict[str, Any] | None = None
+) -> Any:
+    """A stand-in openai client whose embeddings endpoint answers with `data`.
+
+    `index` is written out per item so a test can say what the endpoint left
+    off — that omission is the whole subject of the ordering tests below."""
+
+    calls = captured if captured is not None else {}
+
+    def fake_create(**kwargs: Any) -> Any:
+        calls.update(kwargs)
+        return SimpleNamespace(data=data, usage=usage)
+
+    return SimpleNamespace(embeddings=SimpleNamespace(create=fake_create))
+
+
 class TestOpenAIEmbeddingProvider:
+    def _provider(
+        self, data: list[Any], usage: Any = None, captured: dict[str, Any] | None = None
+    ) -> OpenAIEmbeddingProvider:
+        return OpenAIEmbeddingProvider(
+            model="text-embedding-3-small",
+            client=embedding_client(data, usage, captured),  # type: ignore[arg-type]
+        )
+
     def test_embed_returns_vectors_in_input_order(self) -> None:
         captured: dict[str, Any] = {}
-
-        def fake_create(**kwargs: Any) -> Any:
-            captured.update(kwargs)
+        provider = self._provider(
             # Deliberately out of order: the provider must sort by index.
-            return SimpleNamespace(
-                data=[
-                    SimpleNamespace(index=1, embedding=[2.0, 2.0]),
-                    SimpleNamespace(index=0, embedding=[1.0, 1.0]),
-                ],
-                usage=SimpleNamespace(prompt_tokens=12),
-            )
-
-        provider = OpenAIEmbeddingProvider(
-            model="text-embedding-3-small",
-            client=SimpleNamespace(  # type: ignore[arg-type]
-                embeddings=SimpleNamespace(create=fake_create)
-            ),
+            [
+                SimpleNamespace(index=1, embedding=[2.0, 2.0]),
+                SimpleNamespace(index=0, embedding=[1.0, 1.0]),
+            ],
+            usage=SimpleNamespace(prompt_tokens=12),
+            captured=captured,
         )
 
         response = provider.embed(["first", "second"])
@@ -197,17 +213,9 @@ class TestOpenAIEmbeddingProvider:
         assert captured["input"] == ["first", "second"]
 
     def test_embed_reports_the_prompt_tokens_the_api_returns(self) -> None:
-        def fake_create(**kwargs: Any) -> Any:
-            return SimpleNamespace(
-                data=[SimpleNamespace(index=0, embedding=[1.0, 1.0])],
-                usage=SimpleNamespace(prompt_tokens=42),
-            )
-
-        provider = OpenAIEmbeddingProvider(
-            model="text-embedding-3-small",
-            client=SimpleNamespace(  # type: ignore[arg-type]
-                embeddings=SimpleNamespace(create=fake_create)
-            ),
+        provider = self._provider(
+            [SimpleNamespace(index=0, embedding=[1.0, 1.0])],
+            usage=SimpleNamespace(prompt_tokens=42),
         )
 
         assert provider.embed(["first"]).input_tokens == 42
@@ -215,19 +223,77 @@ class TestOpenAIEmbeddingProvider:
     def test_embed_reports_unknown_usage_as_none(self) -> None:
         # OpenAI marks usage required on this response, but the same provider
         # class serves Gemini's compat endpoint, which may omit it.
-        def fake_create(**kwargs: Any) -> Any:
-            return SimpleNamespace(
-                data=[SimpleNamespace(index=0, embedding=[1.0, 1.0])], usage=None
-            )
+        provider = self._provider([SimpleNamespace(index=0, embedding=[1.0, 1.0])], usage=None)
 
-        provider = OpenAIEmbeddingProvider(
-            model="text-embedding-3-small",
-            client=SimpleNamespace(  # type: ignore[arg-type]
-                embeddings=SimpleNamespace(create=fake_create)
+        assert provider.embed(["first"]).input_tokens is None
+
+    def test_embed_falls_back_to_response_order_when_an_index_is_missing(self) -> None:
+        # Gemini's compat layer is proto3-backed, so it omits any field equal to
+        # its default — item 0 comes back with no `index` at all, which the SDK
+        # reads back as None. Sorting on that would compare int against None.
+        # A batch is either fully numbered or not to be sorted on: one missing
+        # index makes the whole ordering untrustworthy, so all of it falls back.
+        provider = self._provider(
+            [
+                SimpleNamespace(index=None, embedding=[1.0, 1.0]),
+                SimpleNamespace(index=1, embedding=[2.0, 2.0]),
+                SimpleNamespace(index=2, embedding=[3.0, 3.0]),
+            ]
+        )
+
+        response = provider.embed(["first", "second", "third"])
+
+        assert response.vectors == [[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]]
+
+    def test_embed_keeps_response_order_when_no_index_is_reported(self) -> None:
+        # Nothing to sort by: the endpoint answers in input order, so trust it.
+        provider = self._provider(
+            [
+                SimpleNamespace(index=None, embedding=[1.0, 1.0]),
+                SimpleNamespace(index=None, embedding=[2.0, 2.0]),
+            ]
+        )
+
+        assert provider.embed(["first", "second"]).vectors == [[1.0, 1.0], [2.0, 2.0]]
+
+    def test_embed_still_sorts_when_every_index_is_reported(self) -> None:
+        # The fallback must not cost us the reordering when the provider does
+        # number its items — that pairing is the only thing tying a vector to
+        # the text that produced it.
+        provider = self._provider(
+            [
+                SimpleNamespace(index=2, embedding=[3.0, 3.0]),
+                SimpleNamespace(index=0, embedding=[1.0, 1.0]),
+                SimpleNamespace(index=1, embedding=[2.0, 2.0]),
+            ],
+            usage=SimpleNamespace(prompt_tokens=12),
+        )
+
+        response = provider.embed(["first", "second", "third"])
+
+        assert response.vectors == [[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]]
+
+
+class TestGeminiEmbeddingProvider:
+    def test_embed_survives_the_compat_layers_omitted_index_and_usage(self) -> None:
+        # Inherited from OpenAIEmbeddingProvider and covered there, but this is
+        # the class the crash was reported against, so pin the live shape of a
+        # gemini-embedding-001 batch at the surface a caller actually builds:
+        # item 0 carries no `index`, and the endpoint reports no usage at all.
+        provider = GeminiEmbeddingProvider(
+            model="gemini-embedding-001",
+            client=embedding_client(  # type: ignore[arg-type]
+                [
+                    SimpleNamespace(index=None, embedding=[1.0, 1.0]),
+                    SimpleNamespace(index=1, embedding=[2.0, 2.0]),
+                ]
             ),
         )
 
-        assert provider.embed(["first"]).input_tokens is None
+        response = provider.embed(["first", "second"])
+
+        assert response.vectors == [[1.0, 1.0], [2.0, 2.0]]
+        assert response.input_tokens is None
 
 
 class TestFakeProvider:
