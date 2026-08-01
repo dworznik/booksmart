@@ -385,6 +385,33 @@ def stub_embedder() -> StubEmbeddingProvider:
     return StubEmbeddingProvider()
 
 
+# The fixed vector every stubbed search query embeds to. Search tests seed
+# points at known angles from it, so each expected COSINE score is arithmetic
+# rather than a property of some provider's model.
+QUERY_VECTOR = [1.0, 0.0]
+
+
+class QueryEmbedder:
+    """Embeds any query to the same fixed vector; records what it was asked."""
+
+    model = "stub-embed-1"
+    max_batch = 100
+
+    # Fixed per-call usage so tests can assert an exact number.
+    INPUT_TOKENS_PER_CALL = 9
+
+    def __init__(self, vector: list[float] | None = None) -> None:
+        self.vector = vector or QUERY_VECTOR
+        self.calls: list[list[str]] = []
+
+    def embed(self, texts: list[str]) -> EmbeddingResponse:
+        self.calls.append(list(texts))
+        return EmbeddingResponse(
+            vectors=[list(self.vector) for _ in texts],
+            input_tokens=self.INPUT_TOKENS_PER_CALL,
+        )
+
+
 @pytest.fixture()
 def vector_store() -> VectorStore:
     """A fresh in-memory Qdrant per test."""

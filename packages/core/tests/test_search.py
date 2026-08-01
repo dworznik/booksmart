@@ -19,34 +19,12 @@ from booksmart_core.models import Book, Chapter, KnowledgeObject, Section
 from booksmart_core.search import SearchHit, search
 from booksmart_core.vectors import RecordType, VectorRecord, VectorStore
 
-from .conftest import store_book
+from .conftest import QUERY_VECTOR, QueryEmbedder, store_book
 
-# The query vector, and points at 0°, 45° and 90° from it.
-QUERY_VECTOR = [1.0, 0.0]
+# Points at 0°, 45° and 90° from the query vector.
 EXACT = [1.0, 0.0]
 DIAGONAL = [1.0, 1.0]
 ORTHOGONAL = [0.0, 1.0]
-
-
-class QueryEmbedder:
-    """Embeds any query to the same fixed vector; records what it was asked."""
-
-    model = "stub-embed-1"
-    max_batch = 100
-
-    # Fixed per-call usage so tests can assert an exact number.
-    INPUT_TOKENS_PER_CALL = 9
-
-    def __init__(self, vector: list[float] | None = None) -> None:
-        self.vector = vector or QUERY_VECTOR
-        self.calls: list[list[str]] = []
-
-    def embed(self, texts: list[str]) -> EmbeddingResponse:
-        self.calls.append(list(texts))
-        return EmbeddingResponse(
-            vectors=[list(self.vector) for _ in texts],
-            input_tokens=self.INPUT_TOKENS_PER_CALL,
-        )
 
 
 class SilentQueryEmbedder:
