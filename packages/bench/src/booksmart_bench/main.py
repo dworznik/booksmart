@@ -25,13 +25,13 @@ from booksmart_bench.config import corpus_home, load_settings, resolve_assets
 from booksmart_bench.errors import BenchError, handle_errors
 from booksmart_bench.truth import Finding, errors_in, lint, load_truth
 
-# The verb -> the issue that fills it in. Until then the stub says so and exits
-# non-zero, rather than reporting a benchmark that never ran.
+# The verb -> what it will do once implemented. Until then the stub says so and
+# exits non-zero, rather than reporting a benchmark that never ran.
 VERBS = {
-    "ingest": "booksmart-bench#14",
-    "run": "booksmart-bench#15",
-    "score": "booksmart-bench#16",
-    "report": "booksmart-bench#16",
+    "ingest": "build a corpus for this configuration",
+    "run": "execute the benchmarks and emit a run file",
+    "score": "compare a run file against truth",
+    "report": "render two runs side by side",
 }
 
 app = typer.Typer(
@@ -68,7 +68,7 @@ def _resolve_and_report(verb: str, assets: Path | None) -> None:
     )
     _report_findings(lint(truth))
 
-    raise BenchError(f"`{verb}` is not implemented yet ({VERBS[verb]}).")
+    raise BenchError(f"`{verb}` is not implemented yet — it will {VERBS[verb]}.")
 
 
 def _report_findings(findings: tuple[Finding, ...]) -> None:

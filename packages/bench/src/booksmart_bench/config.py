@@ -33,6 +33,11 @@ HOME_ENV = "BOOKSMART_BENCH_HOME"
 # The Settings fields that decide what a corpus *contains*. Anything absent from
 # this list is deliberately absent: locations and credentials describe where a
 # corpus lives and how it was reached, not what is in it.
+#
+# Add to this list whenever core gains a setting that changes what ingest
+# writes — a sparse-retrieval recipe being the obvious next one. A field that
+# belongs here and is missing does not fail loudly: two incompatible corpora
+# quietly share a directory and the second silently scores against the first.
 CORPUS_DEFINING_FIELDS = (
     "llm_provider",
     "llm_model",

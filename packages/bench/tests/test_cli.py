@@ -101,7 +101,7 @@ class TestTruthGate:
 
 class TestStubs:
     @pytest.mark.parametrize("verb", VERB_NAMES)
-    def test_a_stub_exits_non_zero_and_names_its_issue(
+    def test_a_stub_exits_non_zero_and_says_what_it_will_do(
         self, runner: CliRunner, make_assets: Callable[..., Path], verb: str
     ) -> None:
         """A stub that exited 0 would read as a passing benchmark in a script."""

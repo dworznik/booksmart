@@ -9,17 +9,17 @@ Every fixture here is synthetic. Real titles and real corpus shape live in the
 private assets repo, never in these tests.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import pytest
 
 from booksmart_bench.errors import BenchError
-from booksmart_bench.truth import content_words, errors_in, load_truth, lint
+from booksmart_bench.truth import Finding, content_words, errors_in, lint, load_truth
 
 
-def messages(findings: object) -> str:
-    return "\n".join(f"{f.severity}: {f.where}: {f.message}" for f in findings)  # type: ignore[attr-defined]
+def messages(findings: Iterable[Finding]) -> str:
+    return "\n".join(f"{f.severity}: {f.where}: {f.message}" for f in findings)
 
 
 class TestLoad:
@@ -125,6 +125,31 @@ class TestLocationIntegrity:
         assets = write_truth("a-book", index_pairs=[{"term": "widget", "loc": "nowhere"}])
 
         assert "nowhere" in messages(errors_in(lint(load_truth(assets))))
+
+    def test_a_toc_entry_without_an_id_is_reported_not_raised(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        """Every other malformation becomes a finding naming the file; this one
+        must not be the exception that dumps a traceback instead."""
+        assets = write_truth(
+            "a-book", toc={"chapters": [{"title": "A Chapter With No Id"}]}
+        )
+
+        findings = errors_in(lint(load_truth(assets)))
+
+        assert "A Chapter With No Id" in messages(findings)
+        assert "no id" in messages(findings)
+
+    def test_a_section_under_an_idless_chapter_still_loads(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        """One bad entry should cost one node, not the subtree under it."""
+        assets = write_truth(
+            "a-book",
+            toc={"chapters": [{"title": "No Id", "sections": [{"id": "1.1", "title": "A"}]}]},
+        )
+
+        assert "1.1" in load_truth(assets).books["a-book"].nodes
 
     def test_a_duplicate_node_id_is_an_error(
         self, write_truth: Callable[..., Path]
@@ -317,19 +342,97 @@ class TestCoverageWarnings:
 
         assert "conceptual" in messages(lint(load_truth(assets)))
 
-    def test_an_unpinned_source_is_a_warning(self, write_truth: Callable[..., Path]) -> None:
+    def test_an_unpinned_source_is_a_warning(
+        self, write_truth: Callable[..., Path], book_defaults: dict[str, object]
+    ) -> None:
         """Truth authored against an unpinned artifact can silently score a
         different edition."""
         assets = write_truth(
             "a-book",
             book=dict(
-                _book_defaults(),
+                book_defaults,
                 slug="a-book",
                 source={"file": "sources/a-book.pdf", "sha256": "TBD-when-file-lands"},
             ),
         )
 
         assert "sha256" in messages(lint(load_truth(assets)))
+
+    def test_an_unauthored_query_set_warns_once_not_per_kind(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        """A book waiting on its source is a different situation from a lopsided
+        set, and three shortfall warnings would bury that."""
+        findings = lint(load_truth(write_truth("a-book", queries=[])))
+
+        thin = [f for f in findings if "queries" in f.message]
+        assert len(thin) == 1
+        assert "no queries authored" in thin[0].message
+
+    def test_area_query_sets_are_checked_for_kind_coverage_too(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        assets = write_truth(
+            "a-book",
+            area="an-area",
+            area_queries=[
+                {
+                    "q": "grommets",
+                    "kind": "exact-term",
+                    "expects": [{"book": "a-book", "loc": "1.2"}],
+                    "why": "W.",
+                }
+            ],
+        )
+
+        assert "conceptual" in messages(lint(load_truth(assets)))
+
+
+class TestGatedSlices:
+    """Truth for a slice that waits on a pipeline feature is authored from the
+    start and marked, so the scorer can skip it instead of counting a miss it
+    could never have hit."""
+
+    def test_gated_queries_are_reported_as_a_count(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        assets = write_truth(
+            "a-book",
+            queries=[
+                {
+                    "q": "grommets",
+                    "kind": "exact-term",
+                    "expects": [{"loc": "1.2"}],
+                    "why": "W.",
+                    "gated": True,
+                }
+            ],
+        )
+
+        findings = lint(load_truth(assets))
+
+        assert not errors_in(findings)
+        assert "1 gated entry" in messages(findings)
+
+    def test_gated_index_pairs_are_reported_too(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        assets = write_truth(
+            "a-book",
+            index_pairs=[
+                {"term": "widget", "loc": "1.1", "gated": True},
+                {"term": "grommet", "loc": "1.2", "gated": True},
+            ],
+        )
+
+        assert "2 gated entries" in messages(lint(load_truth(assets)))
+
+    def test_an_ungated_tree_says_nothing_about_gating(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        assets = write_truth("a-book", index_pairs=[{"term": "widget", "loc": "1.1"}])
+
+        assert "gated" not in messages(lint(load_truth(assets)))
 
 
 class TestContentWords:
@@ -341,12 +444,3 @@ class TestContentWords:
 
     def test_is_case_insensitive(self) -> None:
         assert content_words("Widgets") == content_words("widgets")
-
-
-def _book_defaults() -> dict[str, object]:
-    return {
-        "title": "Placeholder Book",
-        "edition": "1st",
-        "authors": ["A. Author"],
-        "area": "placeholder-area",
-    }

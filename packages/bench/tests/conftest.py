@@ -118,5 +118,11 @@ def _dump(path: Path, payload: object) -> None:
 
 
 @pytest.fixture()
+def book_defaults() -> dict[str, object]:
+    """A valid book identity, for tests that need to vary exactly one field."""
+    return dict(_DEFAULT_BOOK)
+
+
+@pytest.fixture()
 def runner() -> CliRunner:
     return CliRunner()

@@ -31,14 +31,16 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_args
 
 import yaml
 
 from booksmart_bench.errors import BenchError
 
 QueryKind = Literal["exact-term", "conceptual", "mixed"]
-QUERY_KINDS: frozenset[str] = frozenset({"exact-term", "conceptual", "mixed"})
+QUERY_KINDS: frozenset[str] = frozenset(get_args(QueryKind))
+
+NodeKind = Literal["front-matter", "chapter", "section", "back-matter"]
 
 Severity = Literal["error", "warning"]
 
@@ -63,7 +65,7 @@ BOOK_FILES = ("book.yaml", "toc.yaml", "queries.yaml", "concepts.yaml", "index-p
 class TocNode:
     id: str
     title: str
-    kind: Literal["front-matter", "chapter", "section", "back-matter"]
+    kind: NodeKind
     parent: str | None = None
 
 
@@ -84,6 +86,10 @@ class Query:
     kind: str  # validated by the lint, not the loader, so a typo is reportable
     expects: tuple[Expectation, ...]
     why: str
+    # Specced now, scoreable later: a slice waiting on a pipeline feature is
+    # written into truth from the start and marked, so the scorer skips and
+    # reports it rather than counting a miss it could never have hit.
+    gated: bool = False
 
 
 @dataclass(frozen=True)
@@ -97,6 +103,7 @@ class Concept:
 class IndexPair:
     term: str
     loc: str
+    gated: bool = False
 
 
 @dataclass(frozen=True)
@@ -112,11 +119,14 @@ class BookTruth:
     # Ids that appeared more than once in toc.yaml; the loader keeps the first
     # and records the collision so the lint can report it.
     duplicate_ids: tuple[str, ...] = ()
+    # Entries the loader could not turn into nodes at all, described well enough
+    # for the lint to name them.
+    malformed_nodes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class Truth:
-    root: Path
+    assets: Path
     books: dict[str, BookTruth] = field(default_factory=dict)
     areas: dict[str, tuple[Query, ...]] = field(default_factory=dict)
 
@@ -146,12 +156,12 @@ def load_truth(assets: Path) -> Truth:
             areas = _load_areas(child)
         else:
             books[child.name] = _load_book(child)
-    return Truth(root=assets, books=books, areas=areas)
+    return Truth(assets=assets, books=books, areas=areas)
 
 
 def _load_book(directory: Path) -> BookTruth:
     identity = _read_mapping(directory / "book.yaml")
-    nodes, duplicates = _read_toc(directory / "toc.yaml")
+    nodes, duplicates, malformed = _read_toc(directory / "toc.yaml")
     source = identity.get("source")
     sha256 = source.get("sha256") if isinstance(source, dict) else None
 
@@ -162,6 +172,7 @@ def _load_book(directory: Path) -> BookTruth:
         source_sha256=None if sha256 is None else str(sha256),
         nodes=nodes,
         duplicate_ids=duplicates,
+        malformed_nodes=malformed,
         queries=_read_queries(directory / "queries.yaml"),
         concepts=tuple(
             Concept(
@@ -172,7 +183,11 @@ def _load_book(directory: Path) -> BookTruth:
             for item in _read_sequence(directory / "concepts.yaml")
         ),
         index_pairs=tuple(
-            IndexPair(term=str(item.get("term", "")), loc=str(item.get("loc", "")))
+            IndexPair(
+                term=str(item.get("term", "")),
+                loc=str(item.get("loc", "")),
+                gated=bool(item.get("gated", False)),
+            )
             for item in _read_sequence(directory / "index-pairs.yaml")
         ),
     )
@@ -186,35 +201,40 @@ def _load_areas(directory: Path) -> dict[str, tuple[Query, ...]]:
     }
 
 
-def _read_toc(path: Path) -> tuple[dict[str, TocNode], tuple[str, ...]]:
+def _read_toc(path: Path) -> tuple[dict[str, TocNode], tuple[str, ...], tuple[str, ...]]:
     document = _read_mapping(path)
     nodes: dict[str, TocNode] = {}
     duplicates: list[str] = []
+    malformed: list[str] = []
 
-    def add(node: TocNode) -> None:
-        if node.id in nodes:
-            duplicates.append(node.id)
-            return
-        nodes[node.id] = node
+    def add(entry: dict[str, object], kind: NodeKind, parent: str | None = None) -> str | None:
+        """Record one entry, or note why it could not be recorded.
+
+        An entry with no id is reported rather than raised: it is exactly the
+        kind of hand-authoring slip the lint exists to catch, and a traceback
+        would say less about it than a finding naming the file and the title.
+        """
+        title = str(entry.get("title", ""))
+        if "id" not in entry:
+            malformed.append(f"{kind} entry {title or '<untitled>'!r} has no id")
+            return None
+        node_id = str(entry["id"])
+        if node_id in nodes:
+            duplicates.append(node_id)
+            return None
+        nodes[node_id] = TocNode(id=node_id, title=title, kind=kind, parent=parent)
+        return node_id
 
     for entry in _entries(document, "front_matter"):
-        add(TocNode(id=str(entry["id"]), title=str(entry.get("title", "")), kind="front-matter"))
+        add(entry, "front-matter")
     for chapter in _entries(document, "chapters"):
-        chapter_id = str(chapter["id"])
-        add(TocNode(id=chapter_id, title=str(chapter.get("title", "")), kind="chapter"))
+        chapter_id = add(chapter, "chapter")
         for section in _entries(chapter, "sections"):
-            add(
-                TocNode(
-                    id=str(section["id"]),
-                    title=str(section.get("title", "")),
-                    kind="section",
-                    parent=chapter_id,
-                )
-            )
+            add(section, "section", parent=chapter_id)
     for entry in _entries(document, "back_matter"):
-        add(TocNode(id=str(entry["id"]), title=str(entry.get("title", "")), kind="back-matter"))
+        add(entry, "back-matter")
 
-    return nodes, tuple(duplicates)
+    return nodes, tuple(duplicates), tuple(malformed)
 
 
 def _read_queries(path: Path) -> tuple[Query, ...]:
@@ -230,6 +250,7 @@ def _read_queries(path: Path) -> tuple[Query, ...]:
                 for expectation in _entries(item, "expects")
             ),
             why=str(item.get("why", "")),
+            gated=bool(item.get("gated", False)),
         )
         for item in _read_sequence(path)
     )
@@ -306,6 +327,8 @@ def _lint_book(slug: str, book: BookTruth) -> list[Finding]:
         findings.append(
             Finding("error", f"{where}/toc.yaml", f"duplicate node id {duplicate!r}")
         )
+    for malformed in book.malformed_nodes:
+        findings.append(Finding("error", f"{where}/toc.yaml", malformed))
     if not book.source_sha256 or book.source_sha256.upper().startswith(PLACEHOLDER):
         findings.append(
             Finding(
@@ -336,23 +359,16 @@ def _lint_book(slug: str, book: BookTruth) -> list[Finding]:
                     f"{pair.term!r} names unknown location {pair.loc!r}",
                 )
             )
+    findings.extend(
+        _lint_gated(f"{where}/index-pairs.yaml", [p.gated for p in book.index_pairs])
+    )
     return findings
 
 
 def _lint_area(area: str, queries: Sequence[Query], books: dict[str, BookTruth]) -> list[Finding]:
     where = f"truth/areas/{area}/queries.yaml"
     findings = _lint_queries(where, queries, None, books)
-    for query in queries:
-        for expectation in query.expects:
-            if expectation.book is None:
-                findings.append(
-                    Finding(
-                        "error",
-                        where,
-                        f"{query.q!r} has an expectation with no book; area queries must "
-                        "say which book they mean",
-                    )
-                )
+    findings.extend(_lint_kind_coverage(where, queries))
     return findings
 
 
@@ -388,6 +404,20 @@ def _lint_queries(
             )
 
         for expectation in query.expects:
+            # An area query with no book cannot be resolved at all, and saying
+            # so once is clearer than also reporting the location it could never
+            # have looked up.
+            if owner is None and expectation.book is None:
+                findings.append(
+                    Finding(
+                        "error",
+                        where,
+                        f"{query.q!r} has an expectation with no book; area queries must "
+                        "say which book they mean",
+                    )
+                )
+                continue
+
             target = _resolve(expectation, owner, books)
             if expectation.is_placeholder:
                 findings.append(
@@ -443,9 +473,17 @@ def _lint_kind_claim(
 
 
 def _lint_kind_coverage(where: str, queries: Sequence[Query]) -> list[Finding]:
+    """Enough queries of each kind for a per-kind mean to mean something.
+
+    An empty set gets one finding rather than three: a book whose queries are
+    not authored yet is a different situation from one whose set is lopsided,
+    and reporting it as three separate shortfalls buries that.
+    """
     if not queries:
-        return []
+        return [Finding("warning", where, "no queries authored")]
+
     findings: list[Finding] = []
+    findings.extend(_lint_gated(where, [query.gated for query in queries]))
     for kind in sorted(QUERY_KINDS):
         count = sum(1 for query in queries if query.kind == kind)
         if count < MIN_QUERIES_PER_KIND:
@@ -458,6 +496,26 @@ def _lint_kind_coverage(where: str, queries: Sequence[Query]) -> list[Finding]:
                 )
             )
     return findings
+
+
+def _lint_gated(where: str, flags: Sequence[bool]) -> list[Finding]:
+    """Report gated entries as a count, not one finding each.
+
+    A gated slice is correct truth waiting on a pipeline feature, so it is not a
+    problem to fix — but it does mean the file scores less than it looks like it
+    scores, and that has to be visible every run.
+    """
+    gated = sum(1 for flag in flags if flag)
+    if not gated:
+        return []
+    return [
+        Finding(
+            "warning",
+            where,
+            f"{gated} gated entr{'y' if gated == 1 else 'ies'}; "
+            "skipped by the scorer until the feature they wait on lands",
+        )
+    ]
 
 
 def _resolve(
