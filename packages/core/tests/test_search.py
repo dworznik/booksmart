@@ -14,12 +14,15 @@ from qdrant_client import models as qmodels
 from sqlalchemy.orm import Session, sessionmaker
 
 from booksmart_core.errors import ProviderConfigError
+from booksmart_core.fakes import FakeSparseEmbeddingProvider
 from booksmart_core.llm import EmbeddingResponse
 from booksmart_core.models import Book, Chapter, KnowledgeObject, Section
 from booksmart_core.search import SearchHit, search
 from booksmart_core.vectors import RecordType, VectorRecord, VectorStore
 
 from .conftest import store_book
+
+SPARSE_MODEL = "stub-sparse-1"
 
 # The query vector, and points at 0°, 45° and 90° from it.
 QUERY_VECTOR = [1.0, 0.0]
@@ -115,12 +118,19 @@ def seed(
         ("section", section.id, DIAGONAL, "Interfaces."),
         ("knowledge_object", knowledge.id, ORTHOGONAL, "Depth beats breadth."),
     ]
+    # Sparse vectors come from the fake BM25 provider over the same text the
+    # dense vector stands for, so the two halves describe one record — hybrid
+    # tests need the lexical side to mean something, and dense-only tests are
+    # unaffected by its presence.
+    sparse_provider = FakeSparseEmbeddingProvider(model=SPARSE_MODEL)
+    sparse_vectors = sparse_provider.embed_documents([text for *_, text in rows])
     store.replace_book_points(
         str(book_id),
         [
             VectorRecord(
                 id=str(uuid.uuid4()),
                 vector=vector,
+                sparse=sparse_vector,
                 payload={
                     "record_type": record_type,
                     "record_id": str(record_id),
@@ -128,9 +138,12 @@ def seed(
                     "text": text,
                 },
             )
-            for record_type, record_id, vector, text in rows
+            for (record_type, record_id, vector, text), sparse_vector in zip(
+                rows, sparse_vectors, strict=True
+            )
         ],
         embedding_model,
+        sparse_provider.recipe,
     )
     return {"chapter": chapter.id, "section": section.id, "knowledge_object": knowledge.id}
 

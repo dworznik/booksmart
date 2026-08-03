@@ -41,6 +41,7 @@ from booksmart_core.stages import (
     run_structure,
     run_summaries,
 )
+from booksmart_core.sparse import SparseEmbeddingProvider, build_sparse_embedding_provider
 from booksmart_core.storage import BookStorage
 from booksmart_core.summaries import SUMMARY_PROMPT_VERSION
 from booksmart_core.vectors import VectorStore, build_vector_store
@@ -68,6 +69,12 @@ def build_default_llm() -> LLMProvider:
 def build_default_embedder() -> EmbeddingProvider:
     """Test seam, like build_default_llm."""
     return build_embedding_provider(Settings())
+
+
+def build_default_sparse_embedder() -> SparseEmbeddingProvider:
+    """Test seam, like build_default_llm. Constructing the real one downloads the
+    BM25 model, so tests substitute a fake here rather than reaching the network."""
+    return build_sparse_embedding_provider(Settings())
 
 
 def build_default_vector_store() -> VectorStore:
@@ -155,6 +162,7 @@ def _dispatch(
     storage: BookStorage,
     llm: LLMProvider | None,
     embedder: EmbeddingProvider | None,
+    sparse_embedder: SparseEmbeddingProvider | None,
     vector_store: VectorStore | None,
 ) -> StageReport:
     if stage == "parse":
@@ -170,8 +178,14 @@ def _dispatch(
     if stage == "summaries":
         assert llm is not None
         return run_summaries(session, book_id, llm=llm, storage=storage)
-    assert embedder is not None and vector_store is not None
-    return run_embeddings(session, book_id, embedder=embedder, vector_store=vector_store)
+    assert embedder is not None and sparse_embedder is not None and vector_store is not None
+    return run_embeddings(
+        session,
+        book_id,
+        embedder=embedder,
+        sparse_embedder=sparse_embedder,
+        vector_store=vector_store,
+    )
 
 
 def execute_run(
@@ -183,6 +197,7 @@ def execute_run(
     chain: ParserChain | None = None,
     llm: LLMProvider | None = None,
     embedder: EmbeddingProvider | None = None,
+    sparse_embedder: SparseEmbeddingProvider | None = None,
     vector_store: VectorStore | None = None,
     on_stage: Callable[[Stage], None] | None = None,
 ) -> uuid.UUID:
@@ -215,6 +230,7 @@ def execute_run(
                 llm = llm or build_default_llm()
             if "embeddings" in stages:
                 embedder = embedder or build_default_embedder()
+                sparse_embedder = sparse_embedder or build_default_sparse_embedder()
                 vector_store = vector_store or build_default_vector_store()
             stamps = _version_stamps(stages, llm, embedder)
 
@@ -224,7 +240,15 @@ def execute_run(
                     on_stage(stage)
                 reports.append(
                     _dispatch(
-                        stage, session, book_id, chain, storage, llm, embedder, vector_store
+                        stage,
+                        session,
+                        book_id,
+                        chain,
+                        storage,
+                        llm,
+                        embedder,
+                        sparse_embedder,
+                        vector_store,
                     )
                 )
             current_stage = None

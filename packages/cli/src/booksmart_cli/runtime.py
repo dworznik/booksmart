@@ -24,6 +24,7 @@ from booksmart_core.llm import (
     build_llm_provider,
 )
 from booksmart_core.runner import SCOPE_STAGES, execute_run
+from booksmart_core.sparse import SparseEmbeddingProvider, build_sparse_embedding_provider
 from booksmart_core.stages import LLM_STAGES, Stage
 from booksmart_core.storage import BookStorage
 from booksmart_core.vectors import VectorStore, build_vector_store
@@ -37,14 +38,20 @@ __all__ = ["Runtime", "default_home", "load_settings"]
 
 def _build_providers(
     settings: Settings, scope: str
-) -> tuple[LLMProvider | None, EmbeddingProvider | None, VectorStore | None]:
+) -> tuple[
+    LLMProvider | None, EmbeddingProvider | None, SparseEmbeddingProvider | None, VectorStore | None
+]:
     """Build only the providers this scope's stages need — so a profile-only run
-    never constructs an embedder, and an embeddings-only run never an LLM."""
+    never constructs an embedder, and an embeddings-only run never an LLM. The
+    sparse embedder is gated the same way: constructing it downloads the BM25
+    model, which a run that embeds nothing has no reason to pay for."""
     stages = SCOPE_STAGES.get(scope, ())
+    embeds = "embeddings" in stages
     llm = build_llm_provider(settings) if any(s in LLM_STAGES for s in stages) else None
-    embedder = build_embedding_provider(settings) if "embeddings" in stages else None
-    vector_store = build_vector_store(settings) if "embeddings" in stages else None
-    return llm, embedder, vector_store
+    embedder = build_embedding_provider(settings) if embeds else None
+    sparse_embedder = build_sparse_embedding_provider(settings) if embeds else None
+    vector_store = build_vector_store(settings) if embeds else None
+    return llm, embedder, sparse_embedder, vector_store
 
 
 @dataclass
@@ -79,7 +86,7 @@ class Runtime:
         """Run a scope over a book to completion, foreground and synchronous,
         streaming stage progress through ``on_stage``. Returns the Run id; the
         outcome is recorded on the Run (this never raises for a Stage failure)."""
-        llm, embedder, vector_store = _build_providers(self.settings, scope)
+        llm, embedder, sparse_embedder, vector_store = _build_providers(self.settings, scope)
         try:
             return execute_run(
                 self.session_factory,
@@ -88,6 +95,7 @@ class Runtime:
                 scope,
                 llm=llm,
                 embedder=embedder,
+                sparse_embedder=sparse_embedder,
                 vector_store=vector_store,
                 on_stage=on_stage,
             )

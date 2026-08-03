@@ -33,6 +33,7 @@ from rich.table import Table
 
 from booksmart_core.config import Settings
 from booksmart_core.llm import DEFAULT_EMBEDDING_MODELS, DEFAULT_MODELS
+from booksmart_core.sparse import DEFAULT_SPARSE_MODELS
 
 from booksmart_cli.errors import CliError, handle_errors
 
@@ -51,6 +52,7 @@ CONVENTIONAL_ENV = {
 _PROVIDER_CHOICES = {
     "llm_provider": DEFAULT_MODELS,
     "embedding_provider": DEFAULT_EMBEDDING_MODELS,
+    "sparse_provider": DEFAULT_SPARSE_MODELS,
 }
 
 

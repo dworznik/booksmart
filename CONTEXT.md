@@ -53,3 +53,29 @@ The Preferences resolved once when a run is triggered and carried with the
 run, so every step of a durable run behaves consistently regardless of
 config changes or deploys that happen mid-run. Limits are never snapshotted;
 they are enforced live.
+
+### Retrieval
+
+**Dense vector**:
+What an embedding Provider returns for a text: a fixed-size array of floats
+compared by cosine similarity. Carries meaning, not words — it matches a
+paraphrase and misses an unfamiliar proper noun.
+
+**Sparse vector**:
+The lexical counterpart, computed locally rather than by a vendor: term ids
+with weights, one entry per word the text actually contains. Matches the
+words, not the meaning. Stored beside the dense vector on the same point,
+never instead of it.
+
+**Recipe**:
+A sparse model plus the parameters it ran with (for BM25: k, b, avg_len,
+language). The unit the collection is locked to, because the parameters
+change every term weight — a Recipe is what a sparse model *is*, and a bare
+model name does not identify one.
+_Avoid_: sparse model name (it is not enough to identify the weighting)
+
+**Model lock**:
+The collection metadata recording the embedding model and the sparse Recipe
+it was created for, and the refusal to read or write it under any other
+(ADR 0001). Changing either is an explicit migration: drop the collection
+and reprocess every book.

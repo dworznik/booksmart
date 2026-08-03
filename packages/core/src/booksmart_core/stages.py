@@ -46,6 +46,7 @@ from booksmart_core.summaries import (
     build_summary_prompt,
     parse_summary_response,
 )
+from booksmart_core.sparse import SparseEmbeddingProvider
 from booksmart_core.vectors import RecordType, VectorRecord, VectorStore
 
 Stage = Literal["parse", "structure", "profile", "extraction", "summaries", "embeddings"]
@@ -360,10 +361,22 @@ def run_embeddings(
     book_id: uuid.UUID,
     *,
     embedder: EmbeddingProvider,
+    sparse_embedder: SparseEmbeddingProvider,
     vector_store: VectorStore,
 ) -> StageReport:
     """Embed chapter/section summaries and knowledge objects, store the vectors
-    in Qdrant, and link each row via embedding_id."""
+    in Qdrant, and link each row via embedding_id.
+
+    Each record gets both vectors — a dense one from the provider and a sparse
+    BM25 one computed locally — written together in a single upsert. They are
+    two views of the same text, and Qdrant would delete whichever a write left
+    out (see ``vectors.py``), so there is no point at which a record has one
+    and not the other.
+
+    Only the dense side is stamped onto the relational row (``embedding_model``).
+    The sparse recipe is a property of the collection, not of the row: it is
+    locked in collection metadata, and every point in the collection shares it
+    by construction."""
     builder = _ReportBuilder("embeddings")
     book = _load_book(session, book_id)
     builder.log("embeddings: generating embeddings")
@@ -390,7 +403,9 @@ def run_embeddings(
         )
 
     if not items:
-        vector_store.replace_book_points(str(book.id), [], embedder.model)
+        vector_store.replace_book_points(
+            str(book.id), [], embedder.model, sparse_embedder.recipe
+        )
         builder.counts["vectors"] = 0
         builder.log("embeddings: nothing to embed")
         session.commit()
@@ -404,9 +419,14 @@ def run_embeddings(
         response = embedder.embed(batch)
         embedded_vectors.extend(response.vectors)
         builder.log(f"embeddings: batch of {len(batch)} {builder.add_embedding_usage(response)}")
+    # Local computation, so no provider Limit to batch against and no usage to
+    # report — the whole corpus goes in one call.
+    sparse_vectors = sparse_embedder.embed_documents(texts)
     embedded_at = datetime.now(UTC)
     records: list[VectorRecord] = []
-    for (row, record_type, text), vector in zip(items, embedded_vectors, strict=True):
+    for (row, record_type, text), vector, sparse_vector in zip(
+        items, embedded_vectors, sparse_vectors, strict=True
+    ):
         point_id = uuid.uuid4()
         row.embedding_id = point_id
         row.embedding_model = embedder.model
@@ -415,6 +435,7 @@ def run_embeddings(
             VectorRecord(
                 id=str(point_id),
                 vector=vector,
+                sparse=sparse_vector,
                 payload={
                     "record_type": record_type,
                     "record_id": str(row.id),
@@ -423,8 +444,13 @@ def run_embeddings(
                 },
             )
         )
-    vector_store.replace_book_points(str(book.id), records, embedder.model)
+    vector_store.replace_book_points(
+        str(book.id), records, embedder.model, sparse_embedder.recipe
+    )
     builder.counts["vectors"] = len(records)
-    builder.log(f"embeddings: {len(records)} vectors stored ({embedder.model})")
+    builder.log(
+        f"embeddings: {len(records)} vectors stored "
+        f"({embedder.model} + {sparse_embedder.recipe})"
+    )
     session.commit()
     return builder.finish()

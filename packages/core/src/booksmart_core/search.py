@@ -111,17 +111,17 @@ def search(
     """
     _validate_record_types(record_types)
 
-    locked_model = vector_store.verified_model()
-    if locked_model is None:
+    lock = vector_store.verified_lock()
+    if lock is None:
         # Nothing embedded yet; not worth embedding the query. No call was
         # made, so the query cost 0 — not the None that means "we asked".
         return SearchResults(hits=[], embedding_tokens=0)
-    if locked_model != embedder.model:
+    if lock.embedding_model != embedder.model:
         raise ProviderConfigError(
             f"vector collection {vector_store.collection!r} is locked to embedding model "
-            f"{locked_model!r} but the configured embedder is {embedder.model!r}; a query "
-            f"embedded by a different model cannot be compared against these vectors "
-            f"(ADR 0001)"
+            f"{lock.embedding_model!r} but the configured embedder is {embedder.model!r}; "
+            f"a query embedded by a different model cannot be compared against these "
+            f"vectors (ADR 0001)"
         )
 
     embedded = embedder.embed([query])
