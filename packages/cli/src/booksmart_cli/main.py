@@ -16,6 +16,7 @@ from rich.table import Table
 
 from booksmart_core.models import Book, KnowledgeObject, Run
 from booksmart_core.runner import SCOPE_STAGES, has_successful_run
+from booksmart_core.search import SearchMode
 
 from booksmart_cli import reads, registration
 from booksmart_cli.config import config_app
@@ -366,39 +367,79 @@ def search(
         typer.Option(help="Restrict to a record type; repeatable."),
     ] = None,
     limit: Annotated[int, typer.Option(help="Maximum number of hits.")] = 10,
+    dense_only: Annotated[
+        bool,
+        typer.Option(
+            "--dense-only",
+            help=(
+                "Search meaning only, skipping the keyword half. Scores become "
+                "cosine similarities (-1 to 1), comparable across queries."
+            ),
+        ),
+    ] = False,
     score_threshold: Annotated[
         Optional[float],
-        typer.Option(help="Drop hits below this cosine similarity (-1 to 1)."),
+        typer.Option(
+            help=(
+                "Drop hits below this cosine similarity (-1 to 1). Always a "
+                "similarity floor, never a floor on the score shown: in hybrid "
+                "search it bounds the meaning half, so a strong keyword match "
+                "can still rank."
+            )
+        ),
     ] = None,
 ) -> None:
-    """Find the chapters, sections and knowledge objects most similar to a query.
+    """Find the chapters, sections and knowledge objects that best answer a query.
 
-    Searches the embeddings an ingest produced, so a book has to be ingested
-    before it can be found.
+    Searches by meaning and by keyword at once, then merges the two rankings —
+    so an exact term or a proper noun is found even when nothing in the book is
+    phrased the way you asked. Pass --dense-only for meaning alone.
+
+    The `score` column is not a similarity unless you pass --dense-only: it is
+    a merged-rank score, which says how well the two rankings agreed, and only
+    compares within one set of results. `rank` is the position, and is what to
+    read. Searches the embeddings an ingest produced, so a book has to be
+    ingested before it can be found.
     """
     book_id = None if scope == SEARCH_SCOPE_ALL else _parse_uuid(scope)
     runtime = Runtime.load()
-    hits = reads.semantic_search(
+    results = reads.semantic_search(
         runtime,
         query,
+        mode="dense" if dense_only else "hybrid",
         book_id=book_id,
         record_types=type,
         limit=limit,
         score_threshold=score_threshold,
-    ).hits
-    if not hits:
+    )
+    if not results.hits:
         console.print("No matches. Ingest a book first, or try a broader query.")
         return
 
-    table = Table("score", "type", "title", "match")
+    table = Table("rank", "score", "type", "title", "match")
     if book_id is None:
         table.add_column("book")
-    for hit in hits:
-        row = [f"{hit.score:.3f}", hit.record_type, hit.title, _snippet(hit.text)]
+    for hit in results.hits:
+        row = [str(hit.rank), f"{hit.score:.3f}", hit.record_type, hit.title, _snippet(hit.text)]
         if book_id is None:
             row.append(str(hit.book_id))
         table.add_row(*row)
     console.print(table)
+    console.print(f"[dim]{_score_legend(results.mode)}[/dim]")
+
+
+def _score_legend(mode: SearchMode) -> str:
+    """Say what the score column means, every time, under the table.
+
+    The two modes put different kinds of number in the same column, and a user
+    who saw 0.583 without this would reasonably read it as a weak match rather
+    than as the strongest hit of the set."""
+    if mode == "dense":
+        return "meaning only · score is cosine similarity (-1 to 1, higher is closer)"
+    return (
+        "meaning + keyword · score is a merged-rank score, comparable only "
+        "within these results — read the rank"
+    )
 
 
 def _snippet(text: str, width: int = 60) -> str:

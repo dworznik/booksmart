@@ -288,6 +288,64 @@ class VectorStore:
         )
         return response.points
 
+    def hybrid_search(
+        self,
+        vector: list[float],
+        sparse: SparseVector,
+        *,
+        query_filter: qmodels.Filter | None = None,
+        limit: int = 10,
+        offset: int = 0,
+        score_threshold: float | None = None,
+    ) -> list[qmodels.ScoredPoint]:
+        """Dense and sparse retrieval in one query, fused by Reciprocal Rank
+        Fusion, best first.
+
+        Scores are **not** similarities. RRF sums 1/(rank + k) across the
+        branches a point appeared in, so the number describes agreement between
+        two rankings and is comparable only within one result set. Callers that
+        display it have to say so; ``score_threshold`` therefore cannot apply to
+        the fused score, and bounds the dense branch instead — where it is still
+        a cosine floor. A record the floor excludes can still rank on its lexical
+        match alone, which is the point of hybrid retrieval.
+
+        Two constraints here are not obvious and are load-bearing, both verified
+        against embedded Qdrant:
+
+        The filter is duplicated onto each prefetch branch rather than set once
+        at the root. Embedded Qdrant *silently ignores* a root-level filter on a
+        fusion query — it returns other books' records with no error — while the
+        server honours it. Per-branch filters behave identically on both, so
+        that is the only spelling that is correct everywhere.
+
+        Each branch fetches ``limit + offset`` candidates. A branch that fetched
+        only ``limit`` would run out before fusion reached the offset, and later
+        pages would come back short for no visible reason.
+        """
+        candidates = limit + offset
+        response = self.client.query_points(
+            self.collection,
+            prefetch=[
+                qmodels.Prefetch(
+                    query=vector,
+                    using=DENSE_VECTOR_NAME,
+                    filter=query_filter,
+                    limit=candidates,
+                    score_threshold=score_threshold,
+                ),
+                qmodels.Prefetch(
+                    query=_sparse(sparse),
+                    using=SPARSE_VECTOR_NAME,
+                    filter=query_filter,
+                    limit=candidates,
+                ),
+            ],
+            query=qmodels.FusionQuery(fusion=qmodels.Fusion.RRF),
+            limit=limit,
+            offset=offset,
+        )
+        return response.points
+
 
 def _sparse(vector: SparseVector) -> qmodels.SparseVector:
     """Core's sparse vector as the client's. The seam in ``sparse.py`` is

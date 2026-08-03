@@ -7,6 +7,7 @@ particular order of similar hits; the ranking itself is core's contract, proven
 against exact geometry in the core suite.
 """
 
+import re
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -117,10 +118,33 @@ def test_score_threshold_can_exclude_everything(
     ingest_book(book_id)
 
     # Cosine similarity never exceeds 1.0, so nothing can clear this bar.
-    code, out, _ = search(runner, book_id, "deep modules", "--score-threshold", "1.1")
+    code, out, _ = search(
+        runner, book_id, "deep modules", "--dense-only", "--score-threshold", "1.1"
+    )
 
     assert code == 0
     assert "No matches" in out
+
+
+def test_an_impossible_threshold_still_lets_keyword_matches_through(
+    runner: CliRunner,
+    home: Path,
+    tmp_path: Path,
+    make_pdf: Callable[..., Path],
+    add_book: Callable[..., str],
+    ingest_book: Callable[[str], None],
+) -> None:
+    """The documented hybrid behaviour, and the reason --score-threshold is not
+    simply refused in hybrid mode: the floor bounds the meaning half, so a record
+    that matches the words survives a bar no similarity could clear."""
+    book_id = add_book(make_pdf(tmp_path / "book.pdf"))
+    ingest_book(book_id)
+
+    # "determinism" is literally in the fake pipeline's knowledge object.
+    code, out, _ = search(runner, book_id, "fake determinism", "--score-threshold", "1.1")
+
+    assert code == 0
+    assert "knowledge_object" in out
 
 
 def test_a_registered_but_un_ingested_book_has_no_matches(
@@ -216,5 +240,160 @@ def test_the_read_seam_carries_the_query_embedding_usage(
 
 
 def _hit_rows(output: str) -> int:
-    """Count result rows: every hit renders its score as `0.xxx` in the table."""
-    return sum(1 for line in output.splitlines() if "│ 0." in line or "| 0." in line)
+    """Count result rows by their rank cell.
+
+    Not by the score: a fused score can reach 1.0, so a `0.xxx` match would
+    silently skip the top hit — which is exactly the row a limit test cares
+    about."""
+    return len(_ranks(output))
+
+
+_RANK_CELL = re.compile(r"^[│|]\s*(\d+)\s*[│|]")
+
+# rank │ score │ type — the type cell of a result row.
+_HIT_ROW = re.compile(r"^[│|]\s*\d+\s*[│|]\s*[\d.]+\s*[│|]\s*(\w+)\s*[│|]")
+
+
+def _ranks(output: str) -> list[int]:
+    return [int(m.group(1)) for line in output.splitlines() if (m := _RANK_CELL.match(line))]
+
+
+def _first_hit_type(output: str) -> str:
+    for line in output.splitlines():
+        match = _HIT_ROW.match(line)
+        if match:
+            return match.group(1)
+    raise AssertionError(f"no result rows in output:\n{output}")
+
+
+# --- hybrid retrieval (issue #39) -------------------------------------------
+
+
+def test_search_is_hybrid_by_default_and_says_so(
+    runner: CliRunner,
+    home: Path,
+    tmp_path: Path,
+    make_pdf: Callable[..., Path],
+    add_book: Callable[..., str],
+    ingest_book: Callable[[str], None],
+) -> None:
+    book_id = add_book(make_pdf(tmp_path / "book.pdf"))
+    ingest_book(book_id)
+
+    code, out, _ = search(runner, book_id, "deep modules")
+
+    assert code == 0
+    # The legend is not decoration: the same column holds two kinds of number,
+    # and without it 0.583 reads as a weak match rather than the best hit here.
+    assert "meaning + keyword" in out
+    assert "read the rank" in out
+
+
+def test_dense_only_says_its_scores_are_similarities(
+    runner: CliRunner,
+    home: Path,
+    tmp_path: Path,
+    make_pdf: Callable[..., Path],
+    add_book: Callable[..., str],
+    ingest_book: Callable[[str], None],
+) -> None:
+    book_id = add_book(make_pdf(tmp_path / "book.pdf"))
+    ingest_book(book_id)
+
+    code, out, _ = search(runner, book_id, "deep modules", "--dense-only")
+
+    assert code == 0
+    assert "cosine similarity" in out
+    assert "meaning + keyword" not in out
+
+
+def test_hits_are_ranked_from_one(
+    runner: CliRunner,
+    home: Path,
+    tmp_path: Path,
+    make_pdf: Callable[..., Path],
+    add_book: Callable[..., str],
+    ingest_book: Callable[[str], None],
+) -> None:
+    book_id = add_book(make_pdf(tmp_path / "book.pdf"))
+    ingest_book(book_id)
+
+    code, out, _ = search(runner, book_id, "deep modules")
+
+    assert code == 0
+    ranks = _ranks(out)
+    assert ranks == list(range(1, len(ranks) + 1))
+    assert len(ranks) > 1
+
+
+def test_an_exact_term_dense_only_ranks_low_climbs_under_hybrid(
+    runner: CliRunner,
+    home: Path,
+    tmp_path: Path,
+    make_pdf: Callable[..., Path],
+    add_book: Callable[..., str],
+    ingest_book: Callable[[str], None],
+) -> None:
+    """The demo issue #39 asks for, at the real command surface.
+
+    The fake embedder derives its vectors from text length, so it has no notion
+    of meaning at all — which makes it a fair stand-in for a dense model that has
+    never seen the term. The knowledge object is the only record containing the
+    word, and hybrid is what surfaces it.
+    """
+    book_id = add_book(make_pdf(tmp_path / "book.pdf"))
+    ingest_book(book_id)
+
+    hybrid = search(runner, book_id, "determinism")[1]
+    dense = search(runner, book_id, "determinism", "--dense-only")[1]
+
+    # The chapter summaries say "deterministic"; only the knowledge object says
+    # "determinism". Dense-only cannot tell those apart and ranks the chapters
+    # first; the keyword half puts the exact term on top.
+    assert _first_hit_type(hybrid) == "knowledge_object"
+    assert _first_hit_type(dense) == "chapter"
+
+
+def test_dense_only_needs_no_sparse_model(
+    runner: CliRunner,
+    home: Path,
+    tmp_path: Path,
+    make_pdf: Callable[..., Path],
+    add_book: Callable[..., str],
+    ingest_book: Callable[[str], None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A --dense-only search must not construct a sparse provider: the real one
+    downloads a model, and this search will never use it."""
+    book_id = add_book(make_pdf(tmp_path / "book.pdf"))
+    ingest_book(book_id)
+
+    def explode(_: object) -> object:
+        raise AssertionError("dense-only search built a sparse provider")
+
+    monkeypatch.setattr("booksmart_cli.reads.build_sparse_embedding_provider", explode)
+
+    code, out, err = search(runner, book_id, "deep modules", "--dense-only")
+
+    assert code == 0, err
+    assert "chapter" in out
+
+
+def test_the_read_seam_reports_which_mode_produced_the_hits(
+    home: Path,
+    tmp_path: Path,
+    make_pdf: Callable[..., Path],
+    add_book: Callable[..., str],
+    ingest_book: Callable[[str], None],
+) -> None:
+    """Scores mean different things per mode, so a non-CLI consumer of reads.py
+    needs the mode to know what it is holding."""
+    book_id = add_book(make_pdf(tmp_path / "book.pdf"))
+    ingest_book(book_id)
+
+    hybrid = reads.semantic_search(Runtime.load(), "deep modules")
+    dense = reads.semantic_search(Runtime.load(), "deep modules", mode="dense")
+
+    assert hybrid.mode == "hybrid"
+    assert dense.mode == "dense"
+    assert dense.hits[0].score <= 1.0  # a cosine similarity
