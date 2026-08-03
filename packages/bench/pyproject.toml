@@ -1,0 +1,34 @@
+[project]
+name = "booksmart-bench"
+version = "0.0.0"
+description = "Benchmark harness for booksmart — ingestion and recall measured through the real pipeline."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Patryk Dwórznik", email = "patryk@dworznik.com" }]
+# Never published. The version stays 0.0.0 and this classifier makes an
+# accidental upload fail at the index rather than succeed quietly; the publish
+# workflow only ever builds the two named distributions, so this is the backstop.
+classifiers = ["Private :: Do Not Upload"]
+dependencies = [
+    # Unpinned, unlike the CLI's minor-pin: bench is not published, always
+    # installed from this workspace, and its whole job is to measure the core
+    # sitting next to it in the tree. A version constraint here could only ever
+    # be wrong.
+    "booksmart-core",
+    "typer>=0.12.0",
+    "rich>=13.7.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+booksmart-bench = "booksmart_bench.main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/booksmart_bench"]
+
+[tool.uv.sources]
+booksmart-core = { workspace = true }
