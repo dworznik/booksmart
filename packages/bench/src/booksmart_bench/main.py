@@ -23,6 +23,7 @@ from rich.console import Console
 
 from booksmart_bench.config import corpus_home, load_settings, resolve_assets
 from booksmart_bench.errors import BenchError, handle_errors
+from booksmart_bench.truth import Finding, errors_in, lint, load_truth
 
 # The verb -> the issue that fills it in. Until then the stub says so and exits
 # non-zero, rather than reporting a benchmark that never ran.
@@ -50,11 +51,39 @@ AssetsOption = Annotated[
 
 
 def _resolve_and_report(verb: str, assets: Path | None) -> None:
-    """Resolve what every verb needs, show it, then refuse the unimplemented work."""
+    """Resolve and check what every verb needs, then refuse the unimplemented work.
+
+    Truth is linted here rather than inside the verbs because every verb depends
+    on it and the failures it catches are silent ones: a location nothing can
+    satisfy scores zero and reads as a retrieval regression, not as a typo.
+    """
     resolved = resolve_assets(assets)
     console.print(f"assets: [cyan]{resolved}[/cyan]")
     console.print(f"corpus: [cyan]{corpus_home(load_settings())}[/cyan]")
+
+    truth = load_truth(resolved)
+    console.print(
+        f"truth: [cyan]{len(truth.books)}[/cyan] book(s), "
+        f"[cyan]{len(truth.areas)}[/cyan] area(s)"
+    )
+    _report_findings(lint(truth))
+
     raise BenchError(f"`{verb}` is not implemented yet ({VERBS[verb]}).")
+
+
+def _report_findings(findings: tuple[Finding, ...]) -> None:
+    """Show every finding, then stop on the ones that make truth unscoreable.
+    Warnings are printed and survived: truth for an area is authored before every
+    book in it exists, and that half-finished state has to stay workable."""
+    for finding in findings:
+        colour = "red" if finding.severity == "error" else "yellow"
+        console.print(f"[{colour}]{finding.severity}[/{colour}] {finding.where}: {finding.message}")
+
+    failures = errors_in(findings)
+    if failures:
+        raise BenchError(
+            f"{len(failures)} error(s) in truth; fix them before running a benchmark."
+        )
 
 
 @app.command()

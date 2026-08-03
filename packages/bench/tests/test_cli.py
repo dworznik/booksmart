@@ -54,6 +54,51 @@ class TestUnresolvedAssets:
         assert "does not exist" in result.stderr
 
 
+class TestTruthGate:
+    """Truth is checked before anything is spent, in every verb — including the
+    expensive one."""
+
+    @pytest.mark.parametrize("verb", VERB_NAMES)
+    def test_unscoreable_truth_stops_the_verb(
+        self, runner: CliRunner, write_truth: Callable[..., Path], verb: str
+    ) -> None:
+        assets = write_truth(
+            "a-book",
+            queries=[
+                {
+                    "q": "a term",
+                    "kind": "exact-term",
+                    "expects": [{"loc": "9.9"}],
+                    "why": "Names a location that does not exist.",
+                }
+            ],
+        )
+
+        result = runner.invoke(app, [verb, "--assets", str(assets)])
+
+        assert result.exit_code == 1
+        assert "9.9" in result.stdout
+        assert "not implemented" not in result.stderr
+
+    def test_warnings_are_shown_but_survived(
+        self, runner: CliRunner, write_truth: Callable[..., Path]
+    ) -> None:
+        """Half-authored truth — a source not yet pinned — has to stay workable."""
+        assets = write_truth(
+            "a-book",
+            book={
+                "title": "Placeholder Book",
+                "area": "placeholder-area",
+                "source": {"file": "sources/x.pdf", "sha256": "TBD-when-file-lands"},
+            },
+        )
+
+        result = runner.invoke(app, ["score", "--assets", str(assets)])
+
+        assert "sha256" in result.stdout
+        assert "not implemented" in result.stderr  # got past the gate
+
+
 class TestStubs:
     @pytest.mark.parametrize("verb", VERB_NAMES)
     def test_a_stub_exits_non_zero_and_names_its_issue(
