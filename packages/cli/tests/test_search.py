@@ -232,7 +232,7 @@ def test_the_read_seam_carries_the_query_embedding_usage(
     book_id = add_book(make_pdf(tmp_path / "book.pdf"))
     ingest_book(book_id)
 
-    results = reads.semantic_search(Runtime.load(), "deep modules")
+    results = reads.search_records(Runtime.load(), "deep modules")
 
     assert results.hits
     # The fake embedding provider reports a truthful zero: no call was billed.
@@ -391,8 +391,8 @@ def test_the_read_seam_reports_which_mode_produced_the_hits(
     book_id = add_book(make_pdf(tmp_path / "book.pdf"))
     ingest_book(book_id)
 
-    hybrid = reads.semantic_search(Runtime.load(), "deep modules")
-    dense = reads.semantic_search(Runtime.load(), "deep modules", mode="dense")
+    hybrid = reads.search_records(Runtime.load(), "deep modules")
+    dense = reads.search_records(Runtime.load(), "deep modules", mode="dense")
 
     assert hybrid.mode == "hybrid"
     assert dense.mode == "dense"

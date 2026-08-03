@@ -4,8 +4,12 @@
 > not settle from primary sources: **does fusing BM25 with dense retrieval
 > actually beat dense retrieval alone on booksmart's corpus?**
 >
-> Measured at [`6c293b0`](https://github.com/dworznik/booksmart/tree/6c293b0).
-> The tables below are generated; the conclusion is written. Regenerate with:
+> **Frozen at [`7a04ae3`](https://github.com/dworznik/booksmart/tree/7a04ae3)**
+> (2026-08-03), the commit that merged this eval with the hybrid slices it
+> measures. The numbers below are a record of what two embedding models did on
+> that day against that corpus; they are not refreshed when either moves. The
+> harness is checked in, so a later question gets a new run and a new note rather
+> than an edit to this one:
 >
 > ```bash
 > BOOKSMART_EVAL_EMBEDDING_PROVIDER=openai BOOKSMART_EVAL_API_KEY=$OPENAI_API_KEY \
@@ -97,7 +101,7 @@ half the corpus, which is close to the worst case for rank-only fusion.
 3. **Try weighted fusion.** Qdrant offers DBSF (distribution-based score fusion)
    alongside RRF; it reads scores rather than ranks and so cannot promote a
    near-zero sparse match to the top on rank alone.
-4. **Re-run this before choosing a sparse model.** The BM25-vs-miniCOIL-vs-SPLADE
+4. **Measure again before choosing a sparse model.** The BM25-vs-miniCOIL-vs-SPLADE
    question is not answerable from these numbers: BM25 was never the binding
    constraint here, the fusion policy was.
 5. **Grow the corpus before trusting the conclusion too far.** Two or three

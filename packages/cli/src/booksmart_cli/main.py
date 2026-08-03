@@ -403,7 +403,7 @@ def search(
     """
     book_id = None if scope == SEARCH_SCOPE_ALL else _parse_uuid(scope)
     runtime = Runtime.load()
-    results = reads.semantic_search(
+    results = reads.search_records(
         runtime,
         query,
         mode="dense" if dense_only else "hybrid",

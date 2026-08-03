@@ -19,6 +19,7 @@ from booksmart_core.sparse import (
     SparseEmbeddingProvider,
     SparseVector,
     build_sparse_embedding_provider,
+    recipe_of,
 )
 
 
@@ -153,3 +154,54 @@ class TestFastEmbedBM25:
         # empty vector. Qdrant scores that as no match rather than raising, but
         # the search path has to know it is a real possibility.
         assert bm25.embed_query("the and of").indices == []
+
+
+class TestRecipeStrictness:
+    """A partial recipe is refused rather than silently shortened.
+
+    The recipe is read off the constructed model so that drift in the *library's*
+    defaults trips the collection lock. The same indirection means a library that
+    renamed or moved those attributes would leave us locking collections against a
+    bare model name — at which point parameter drift stops being detectable, which
+    is the one thing the recipe exists to do.
+    """
+
+    def test_a_model_missing_a_parameter_cannot_be_locked(self) -> None:
+        class HalfDescribed:
+            k = 1.2
+            b = 0.75
+            # no avg_len, no language
+
+        with pytest.raises(ProviderConfigError) as excinfo:
+            recipe_of("Qdrant/bm25", HalfDescribed())
+
+        message = str(excinfo.value)
+        assert "avg_len" in message
+        assert "language" in message
+        assert "k=" not in message  # names what is missing, not what was found
+
+    def test_a_model_describing_nothing_cannot_be_locked(self) -> None:
+        with pytest.raises(ProviderConfigError):
+            recipe_of("prithivida/Splade_PP_en_v1", object())
+
+    def test_a_fully_described_model_produces_a_stable_recipe(self) -> None:
+        class Described:
+            k = 1.2
+            b = 0.75
+            avg_len = 256.0
+            language = "english"
+
+        assert recipe_of("Qdrant/bm25", Described()) == (
+            "Qdrant/bm25(k=1.2,b=0.75,avg_len=256.0,language=english)"
+        )
+
+    def test_parameter_order_is_fixed_not_incidental(self) -> None:
+        # The recipe is compared as a string, so a reordering would read as drift
+        # and force a needless reprocess of every book.
+        class Described:
+            language = "english"
+            avg_len = 256.0
+            b = 0.75
+            k = 1.2
+
+        assert recipe_of("m", Described()).index("k=") < recipe_of("m", Described()).index("b=")

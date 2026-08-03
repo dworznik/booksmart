@@ -11,10 +11,10 @@ What a sparse provider has instead of a bare model name is a **recipe**: the
 model plus the parameters it actually ran with. BM25's k, b and avg_len shape
 every term weight, and its language selects the stopword list and stemmer. Drift
 in any of them changes retrieval without changing anything an operator can
-observe — the exact failure mode ADR 0001 exists to prevent — so the collection
-locks against the whole recipe, not just the name (see ``vectors.py``). Reading
-the parameters back off the constructed model, rather than off our own config,
-means a change in the library's own defaults is caught too.
+observe — the same failure ADR 0001 refuses for dense models — so the collection
+locks against the whole recipe, not just the name (ADR 0003; see ``vectors.py``).
+Reading the parameters back off the constructed model, rather than off our own
+config, means a change in the library's own defaults is caught too.
 
 Documents and queries are deliberately embedded by different calls. BM25 weights
 a document's terms with the saturation parameters; the query side emits a flat
@@ -29,9 +29,10 @@ from typing import Any, Protocol
 from booksmart_core.config import Settings
 from booksmart_core.errors import ProviderConfigError
 
-# The BM25 recipe's parameters, in the order they are written into it. Read off
-# the constructed model by these names; a model that does not define one simply
-# leaves it out (SPLADE and miniCOIL are not parameterised this way).
+# The BM25 recipe's parameters, in the order they are written into it, read off
+# the constructed model by these names. All four are required: a recipe missing
+# one is not a recipe, it is a model name wearing brackets, and it would lock a
+# collection against a weighting it does not actually pin down.
 BM25_RECIPE_PARAMETERS = ("k", "b", "avg_len", "language")
 
 DEFAULT_SPARSE_MODELS = {
@@ -72,15 +73,28 @@ class SparseEmbeddingProvider(Protocol):
     def embed_query(self, text: str) -> SparseVector: ...
 
 
-def _recipe(model: str, parameters: object) -> str:
+def recipe_of(model: str, parameters: object) -> str:
     """``model(k=1.2,b=0.75,…)`` — stable, human-readable, and diffable in an
-    error message, which is the only place an operator ever sees it."""
-    parts = []
-    for name in BM25_RECIPE_PARAMETERS:
-        value = getattr(parameters, name, None)
-        if value is not None:
-            parts.append(f"{name}={value}")
-    return f"{model}({','.join(parts)})" if parts else model
+    error message, which is the only place an operator ever sees it.
+
+    Refuses to build a partial recipe. Reading the parameters off the library's
+    own object is what catches a change in *its* defaults, but it also means a
+    library that renames or relocates them would otherwise leave us silently
+    locking collections against a bare model name — drift would stop being
+    detectable, which is the one thing the recipe exists to do. So a missing
+    parameter is a configuration error naming what could not be read, not a
+    quietly shorter string.
+    """
+    missing = [name for name in BM25_RECIPE_PARAMETERS if getattr(parameters, name, None) is None]
+    if missing:
+        raise ProviderConfigError(
+            f"cannot pin the sparse recipe for {model!r}: the model exposes no "
+            f"{', '.join(missing)}. Only BM25-family models can be locked against "
+            f"their parameters (ADR 0003); a model without them would lock the "
+            f"collection to a name that does not identify its weighting"
+        )
+    parts = [f"{name}={getattr(parameters, name)}" for name in BM25_RECIPE_PARAMETERS]
+    return f"{model}({','.join(parts)})"
 
 
 class FastEmbedBM25Provider:
@@ -110,7 +124,7 @@ class FastEmbedBM25Provider:
         self._embedder = SparseTextEmbedding(model_name=model)
         # Off the constructed model, so a change in fastembed's own defaults
         # trips the collection lock instead of silently re-weighting the corpus.
-        self.recipe = _recipe(model, getattr(self._embedder, "model", None))
+        self.recipe = recipe_of(model, getattr(self._embedder, "model", None))
 
     def embed_documents(self, texts: list[str]) -> list[SparseVector]:
         return [_from_fastembed(vector) for vector in self._embedder.embed(texts)]

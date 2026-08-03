@@ -1,9 +1,10 @@
-"""Unit tests for the model-locked vector collection (ADR 0001).
+"""Unit tests for the model-locked vector collection (ADRs 0001 and 0003).
 
-The collection records the models it was created for — dense *and* sparse — and
-rejects writes from any other, even at matching dimensions: same-dimension
-mixing silently corrupts search, and BM25 parameter drift silently degrades
-recall. Both are the diagnose-from-symptoms failure ADR 0001 exists to prevent.
+The collection records what it was created for — a dense embedding model and a
+sparse recipe — and rejects writes from any other, even at matching dimensions:
+same-dimension mixing silently corrupts search, and BM25 parameter drift
+silently degrades recall. Both are the diagnose-from-symptoms failure the two
+ADRs exist to prevent.
 """
 
 import uuid
@@ -47,20 +48,6 @@ def store() -> VectorStore:
     return VectorStore(QdrantClient(":memory:"))
 
 
-def hybrid_collection(store: VectorStore, **metadata: str) -> None:
-    """A collection with the current schema, so a test can vary one thing."""
-    store.client.create_collection(
-        store.collection,
-        vectors_config={
-            DENSE_VECTOR_NAME: qmodels.VectorParams(size=3, distance=qmodels.Distance.COSINE)
-        },
-        sparse_vectors_config={
-            SPARSE_VECTOR_NAME: qmodels.SparseVectorParams(modifier=qmodels.Modifier.IDF)
-        },
-        metadata=metadata,
-    )
-
-
 class TestModelLockedCollection:
     def test_first_write_records_both_models(self, store: VectorStore) -> None:
         write(store, make_records())
@@ -68,7 +55,7 @@ class TestModelLockedCollection:
         info = store.client.get_collection(store.collection)
         assert info.config.metadata == {
             "embedding_model": "embed-a",
-            "sparse_model": RECIPE,
+            "sparse_recipe": RECIPE,
         }
 
     def test_same_models_writes_are_accepted(self, store: VectorStore) -> None:
@@ -204,7 +191,7 @@ class TestSparseModelLock:
             store.replace_book_points("book-1", make_records(), "embed-a", OTHER_RECIPE)
 
     def test_collection_predating_hybrid_is_rejected(self, store: VectorStore) -> None:
-        # Dense-only collection from before #38: it records no sparse model, so
+        # Dense-only collection from before #38: it records no sparse recipe, so
         # the sparse lock cannot be verified and its points carry no sparse
         # vector. Adopting it would leave half the corpus lexically invisible.
         store.client.create_collection(
@@ -235,7 +222,7 @@ class TestSparseModelLock:
             vectors_config={
                 DENSE_VECTOR_NAME: qmodels.VectorParams(size=3, distance=qmodels.Distance.COSINE)
             },
-            metadata={"embedding_model": "embed-a", "sparse_model": RECIPE},
+            metadata={"embedding_model": "embed-a", "sparse_recipe": RECIPE},
         )
 
         with pytest.raises(ProviderConfigError) as excinfo:

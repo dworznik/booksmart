@@ -20,7 +20,7 @@ from booksmart_core.summaries import SUMMARY_SYSTEM_PROMPT
 from booksmart_core.vectors import (
     COLLECTION_NAME,
     DENSE_VECTOR_NAME,
-    SPARSE_MODEL_KEY,
+    SPARSE_RECIPE_KEY,
     SPARSE_VECTOR_NAME,
     VectorStore,
 )
@@ -528,7 +528,7 @@ class TestHybridVectorsAreWrittenTogether:
 
         metadata = vector_store.client.get_collection(COLLECTION_NAME).config.metadata or {}
 
-        assert metadata[SPARSE_MODEL_KEY] == stub_sparse.recipe
+        assert metadata[SPARSE_RECIPE_KEY] == stub_sparse.recipe
 
     def test_a_book_with_nothing_to_embed_still_clears_its_points(
         self,

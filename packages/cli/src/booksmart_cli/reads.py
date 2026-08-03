@@ -164,7 +164,7 @@ def get_knowledge(runtime: Runtime, object_id: uuid.UUID) -> KnowledgeObject:
     return obj
 
 
-def semantic_search(
+def search_records(
     runtime: Runtime,
     query: str,
     *,
@@ -176,6 +176,9 @@ def semantic_search(
 ) -> SearchResults:
     """Rank embedded records against a natural-language query (no HTTP ancestor —
     this is the first post-split feature, issue #30).
+
+    Not ``semantic_search``: retrieval is hybrid by default, and "semantic" names
+    only the dense half of it (CONTEXT.md).
 
     Validates the user's input before building any provider, so a typo'd book id
     or record type never demands an embedding API key. The sparse provider is

@@ -12,13 +12,14 @@ named vectors for that point, so writing one alone *deletes* the other, and a
 dense-only rewrite would quietly strip the corpus of its lexical half one
 reprocess at a time. ``VectorRecord`` therefore cannot be built with only one.
 
-The collection is locked to both models (ADR 0001): collection metadata records
-the dense embedding model and the sparse *recipe* it was created for, and writes
-from any other are rejected even at matching dimensions. Vectors from different
-dense models are incomparable, and same-dimension mixing degrades search in a
-way no operator can diagnose from symptoms; BM25 parameter drift does the same
-to recall. Switching either is an explicit migration: drop the collection and
-reprocess embeddings for every book.
+The collection is locked to both: collection metadata records the dense
+embedding model (ADR 0001) and the sparse *recipe* — model plus the parameters
+it ran with (ADR 0003) — it was created for, and writes from any other are
+rejected even at matching dimensions. Vectors from different dense models are
+incomparable, and same-dimension mixing degrades search in a way no operator can
+diagnose from symptoms; BM25 parameter drift does the same to recall. Switching
+either is an explicit migration: drop the collection and reprocess embeddings
+for every book.
 """
 
 from collections.abc import Iterable
@@ -35,9 +36,10 @@ from booksmart_core.sparse import SparseVector
 COLLECTION_NAME = "booksmart"
 
 EMBEDDING_MODEL_KEY = "embedding_model"
-# The sparse side records a full recipe (model plus BM25 parameters), not a bare
-# model name — see booksmart_core.sparse. The key stays short and legible.
-SPARSE_MODEL_KEY = "sparse_model"
+# Named for what it holds: a Recipe (model plus BM25 parameters), not a bare
+# model name — a name alone does not identify the weighting, which is the whole
+# reason the sparse side locks against more than one (see booksmart_core.sparse).
+SPARSE_RECIPE_KEY = "sparse_recipe"
 
 # The collection's one dense vector, stored under an explicit name so that
 # adding further named vectors (e.g. a sparse one for hybrid retrieval) is
@@ -111,13 +113,13 @@ class VectorStore:
         yet (nothing has ever been embedded).
 
         The contract has a part per vector: the collection records the dense
-        model and the sparse recipe it was created for (ADR 0001), and it stores
-        each under the name this code reads and writes (``dense``,
+        model (ADR 0001) and the sparse recipe (ADR 0003) it was created for, and
+        it stores each under the name this code reads and writes (``dense``,
         ``text-sparse``). A collection that breaks any part is refused, not
         adopted — its vectors cannot be verified or even addressed as this code
-        expects, and reading them anyway is exactly the silent mixing ADR 0001
-        forbids. Both readers and writers need the models, so both come through
-        here and get the check for free."""
+        expects, and reading them anyway is exactly the silent mixing those ADRs
+        forbid. Both readers and writers need them, so both come through here and
+        get the check for free."""
         if not self.client.collection_exists(self.collection):
             return None
         config = self.client.get_collection(self.collection).config
@@ -149,13 +151,13 @@ class VectorStore:
                 f"embeddings to adopt named-vector storage (ADR 0001)"
             )
 
-        locked_recipe = metadata.get(SPARSE_MODEL_KEY)
+        locked_recipe = metadata.get(SPARSE_RECIPE_KEY)
         if locked_recipe is None:
             raise ProviderConfigError(
                 f"vector collection {self.collection!r} predates hybrid retrieval and "
-                f"records no sparse model; its points carry no sparse vector, so "
+                f"records no sparse recipe; its points carry no sparse vector, so "
                 f"adopting it would leave the corpus lexically invisible. Drop the "
-                f"collection and reprocess embeddings (ADR 0001)"
+                f"collection and reprocess embeddings (ADR 0003)"
             )
         sparse_vectors = config.params.sparse_vectors or {}
         if SPARSE_VECTOR_NAME not in sparse_vectors:
@@ -163,7 +165,7 @@ class VectorStore:
             raise ProviderConfigError(
                 f"vector collection {self.collection!r} defines no {SPARSE_VECTOR_NAME!r} "
                 f"sparse vector (it defines {defined}); drop the collection and "
-                f"reprocess embeddings to adopt hybrid storage (ADR 0001)"
+                f"reprocess embeddings to adopt hybrid storage (ADR 0003)"
             )
         return CollectionLock(
             embedding_model=str(locked_model), sparse_recipe=str(locked_recipe)
@@ -193,7 +195,7 @@ class VectorStore:
                 },
                 metadata={
                     EMBEDDING_MODEL_KEY: embedding_model,
-                    SPARSE_MODEL_KEY: sparse_recipe,
+                    SPARSE_RECIPE_KEY: sparse_recipe,
                 },
             )
             return
@@ -207,13 +209,13 @@ class VectorStore:
         if lock.sparse_recipe != sparse_recipe:
             # The recipe, not the model name: a parameter apart is still a
             # different weighting of every term in the corpus, and the resulting
-            # recall loss has no symptom that points back here.
+            # recall loss has no symptom that points back here (ADR 0003).
             raise ProviderConfigError(
-                f"vector collection {self.collection!r} is locked to sparse model "
+                f"vector collection {self.collection!r} is locked to sparse recipe "
                 f"{lock.sparse_recipe!r} but the configured sparse embedder is "
                 f"{sparse_recipe!r}; switching models or their parameters requires "
                 f"dropping the collection and reprocessing embeddings for every book "
-                f"(ADR 0001)"
+                f"(ADR 0003)"
             )
 
     def replace_book_points(

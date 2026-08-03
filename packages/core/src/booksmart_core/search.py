@@ -177,20 +177,21 @@ def search(
     # anything, so a drifted recipe is not a reason to refuse it — and demanding
     # a sparse provider just to verify the lock would cost a model download for
     # a search that will never use it.
-    if sparse_embedder is not None and mode == "hybrid":
+    if mode == "hybrid":
+        assert sparse_embedder is not None  # guarded at the top
         if lock.sparse_recipe != sparse_embedder.recipe:
             raise ProviderConfigError(
-                f"vector collection {vector_store.collection!r} is locked to sparse model "
+                f"vector collection {vector_store.collection!r} is locked to sparse recipe "
                 f"{lock.sparse_recipe!r} but the configured sparse embedder is "
                 f"{sparse_embedder.recipe!r}; a query weighted by different BM25 "
                 f"parameters cannot be compared against these vectors. Drop the "
-                f"collection and reprocess embeddings for every book (ADR 0001)"
+                f"collection and reprocess embeddings for every book (ADR 0003)"
             )
 
     embedded = embedder.embed([query])
     query_filter = _build_filter(book_id, record_types)
     if mode == "hybrid":
-        assert sparse_embedder is not None  # guarded above
+        assert sparse_embedder is not None
         points = vector_store.hybrid_search(
             embedded.vectors[0],
             sparse_embedder.embed_query(query),

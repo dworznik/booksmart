@@ -75,10 +75,10 @@ model name does not identify one.
 _Avoid_: sparse model name (it is not enough to identify the weighting)
 
 **Model lock**:
-The collection metadata recording the embedding model and the sparse Recipe
-it was created for, and the refusal to read or write it under any other
-(ADR 0001). Changing either is an explicit migration: drop the collection
-and reprocess every book.
+The collection metadata recording the embedding model (ADR 0001) and the
+sparse Recipe (ADR 0003) it was created for, and the refusal to read or
+write it under any other. Changing either is an explicit migration: drop the
+collection and reprocess every book.
 
 **Hybrid search**:
 The default: retrieve by Dense vector and by Sparse vector independently,

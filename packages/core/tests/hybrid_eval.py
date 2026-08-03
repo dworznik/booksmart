@@ -480,7 +480,7 @@ class QueryOutcome:
     """One query under one mode: where each expected record landed."""
 
     query: FixtureQuery
-    mode: str
+    mode: SearchMode
     # Expected record key -> its 1-based rank, or None when it did not appear.
     ranks: dict[str, int | None]
 
@@ -505,6 +505,8 @@ class QueryOutcome:
 
 
 def summarise(outcomes: Sequence[QueryOutcome], k: int = 5) -> dict[str, float]:
+    """Hit@k and MRR over a slice of outcomes, plus the slice's size so a report
+    can show what an average was taken over."""
     if not outcomes:
         return {"queries": 0, f"hit@{k}": 0.0, "mrr": 0.0}
     return {
@@ -697,6 +699,7 @@ def compare(
 
 
 def _rank_cell(outcome: QueryOutcome) -> str:
+    """Every expected record and where it landed, `—` for one that never showed."""
     parts = []
     for key, rank in outcome.ranks.items():
         parts.append(f"{key} @{rank}" if rank is not None else f"{key} —")
@@ -704,6 +707,11 @@ def _rank_cell(outcome: QueryOutcome) -> str:
 
 
 def _verdict(hybrid: QueryOutcome, dense: QueryOutcome) -> str:
+    """Which mode put an expected record higher, comparing best ranks.
+
+    Not-retrieved loses to any rank, and two not-retrieveds are a tie: the metric
+    is "how close to the top did the right answer get", and absence is the same
+    absence either way."""
     best_hybrid, best_dense = hybrid.best_rank, dense.best_rank
     if best_hybrid == best_dense:
         return "tie"

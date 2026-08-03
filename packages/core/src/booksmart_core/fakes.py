@@ -9,6 +9,7 @@ the stage's parser expects.
 import json
 import re
 import zlib
+from dataclasses import dataclass
 
 from booksmart_core.extraction import EXTRACTION_SYSTEM_PROMPT
 from booksmart_core.llm import (
@@ -19,7 +20,7 @@ from booksmart_core.llm import (
     resolve_limits,
 )
 from booksmart_core.profile import PROFILE_SYSTEM_PROMPT
-from booksmart_core.sparse import SparseVector
+from booksmart_core.sparse import SparseVector, recipe_of
 from booksmart_core.summaries import SUMMARY_SYSTEM_PROMPT
 
 FAKE_LLM_MODEL = "fake-llm-1"
@@ -106,6 +107,21 @@ class FakeEmbeddingProvider:
 _WORD = re.compile(r"\w+")
 
 
+@dataclass(frozen=True)
+class _FakeBM25Parameters:
+    """The parameter surface `recipe_of` reads. Zeroed: the fake does no BM25
+    weighting, and a recipe claiming real parameters would be a lie the lock
+    would then enforce."""
+
+    k: float = 0.0
+    b: float = 0.0
+    avg_len: float = 0.0
+    language: str = "none"
+
+
+_FAKE_BM25_PARAMETERS = _FakeBM25Parameters()
+
+
 class FakeSparseEmbeddingProvider:
     """Hashed word counts standing in for BM25: no download, no dependency.
 
@@ -119,9 +135,10 @@ class FakeSparseEmbeddingProvider:
 
     def __init__(self, model: str = FAKE_SPARSE_MODEL) -> None:
         self.model = model
-        # Shaped like a real recipe (see sparse.py) so lock handling is exercised
-        # against the same format in tests as in production.
-        self.recipe = f"{model}(k=0,b=0,avg_len=0,language=none)"
+        # Built by the real recipe builder, so lock handling is exercised against
+        # the same format in tests as in production — and a change to that format
+        # cannot leave the fake behind spelling the old one.
+        self.recipe = recipe_of(model, _FAKE_BM25_PARAMETERS)
 
     def embed_documents(self, texts: list[str]) -> list[SparseVector]:
         return [self._weighted(text) for text in texts]
@@ -134,7 +151,8 @@ class FakeSparseEmbeddingProvider:
     def _weighted(self, text: str) -> SparseVector:
         counts: dict[int, float] = {}
         for word in _WORD.findall(text.lower()):
-            counts[_term_id(word)] = counts.get(_term_id(word), 0.0) + 1.0
+            term = _term_id(word)
+            counts[term] = counts.get(term, 0.0) + 1.0
         indices = sorted(counts)
         return SparseVector(indices=indices, values=[counts[index] for index in indices])
 
