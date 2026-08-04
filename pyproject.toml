@@ -6,31 +6,34 @@ requires-python = ">=3.12"
 dependencies = [
     "booksmart-core",
     "booksmart",
+    "booksmart-bench",
 ]
 
 [tool.uv]
 package = false
 
 [tool.uv.workspace]
-members = ["packages/core", "packages/cli"]
+members = ["packages/core", "packages/cli", "packages/bench"]
 
 [tool.uv.sources]
 booksmart-core = { workspace = true }
 booksmart = { workspace = true }
+booksmart-bench = { workspace = true }
 
 [dependency-groups]
 dev = [
     "mypy>=2.1.0",
     "pytest>=9.1.1",
+    "types-PyYAML>=6.0",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/core/tests", "packages/cli/tests"]
+testpaths = ["packages/core/tests", "packages/cli/tests", "packages/bench/tests"]
 # The core suite is a `tests` package (relative imports); the CLI suite is a
 # plain directory. importlib mode lets both coexist without an import-path clash.
 addopts = "--import-mode=importlib"
 
 [tool.mypy]
 strict = true
-packages = ["booksmart_core", "booksmart_cli"]
+packages = ["booksmart_core", "booksmart_cli", "booksmart_bench"]
 mypy_path = "packages/core/stubs"
