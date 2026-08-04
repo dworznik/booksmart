@@ -8,10 +8,13 @@ Shared helpers are fixtures rather than module imports so this suite stays a
 plain directory (no ``__init__.py``) alongside the core and CLI suites.
 """
 
+import hashlib
+import json
 import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
+import pymupdf
 import pytest
 import yaml
 from typer.testing import CliRunner
@@ -115,6 +118,90 @@ _DEFAULT_TOC: dict[str, object] = {
 
 def _dump(path: Path, payload: object) -> None:
     path.write_text(yaml.safe_dump(payload, sort_keys=False))
+
+
+@pytest.fixture()
+def write_run(tmp_path: Path) -> Callable[..., Path]:
+    """Factory: a run file on disk, defaulting to the smallest valid one."""
+
+    def _write(
+        name: str = "run.json",
+        *,
+        run_id: str = "2026-01-01T00-00-00Z-recall",
+        snapshot: str = "fake-fake-00000000",
+        books: list[str] | None = None,
+        results: list[dict[str, object]] | None = None,
+        **sections: object,
+    ) -> Path:
+        payload: dict[str, object] = {
+            "run_id": run_id,
+            "corpus": {"snapshot": snapshot, "books": books or ["placeholder-book"]},
+            "search": {"mode": "hybrid", "limit": 10},
+            "results": results if results is not None else [],
+        }
+        payload.update(sections)
+        path = tmp_path / name
+        path.write_text(json.dumps(payload, indent=2))
+        return path
+
+    return _write
+
+
+def hits(*locs: str, book: str = "placeholder-book") -> list[dict[str, object]]:
+    """Ranked hits from a bare list of locations, rank 1 first."""
+    return [
+        {"rank": rank, "book": book, "loc": loc, "record_type": "section"}
+        for rank, loc in enumerate(locs, start=1)
+    ]
+
+
+@pytest.fixture()
+def fake_providers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Select core's deterministic stand-in providers, so an ingest test runs
+    the real pipeline end to end without a network or an API key."""
+    monkeypatch.setenv("BOOKSMART_LLM_PROVIDER", "fake")
+    monkeypatch.setenv("BOOKSMART_EMBEDDING_PROVIDER", "fake")
+
+
+@pytest.fixture()
+def make_pdf() -> Callable[..., Path]:
+    """Factory: a real PDF with two chapter headings, small enough to ingest
+    quickly. Content is invented — no book text ever lands in this repo."""
+
+    def _make(path: Path, body: str = "Widgets mesh with sprockets.") -> Path:
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text(
+            (72, 72),
+            f"# First Chapter\n\n{body}\n\n# Second Chapter\n\nGrommets seal the joint.",
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(doc.tobytes())
+        doc.close()
+        return path
+
+    return _make
+
+
+@pytest.fixture()
+def place_source(make_pdf: Callable[..., Path]) -> Callable[..., str]:
+    """Factory: drop a source file into an assets checkout and pin its sha256
+    into the book's book.yaml, the state #23 leaves behind."""
+
+    def _place(assets: Path, slug: str, *, pin: bool = True) -> str:
+        source = make_pdf(assets / "sources" / f"{slug}.pdf")
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+
+        book_yaml = assets / "truth" / slug / "book.yaml"
+        identity = yaml.safe_load(book_yaml.read_text())
+        identity["source"] = {
+            "file": f"sources/{slug}.pdf",
+            "sha256": digest if pin else "TBD-when-file-lands",
+        }
+        book_yaml.write_text(yaml.safe_dump(identity, sort_keys=False))
+        return digest
+
+    return _place
 
 
 @pytest.fixture()

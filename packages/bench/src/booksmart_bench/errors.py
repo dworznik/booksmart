@@ -1,35 +1,12 @@
-"""Bench-facing errors and their one-line rendering.
+"""Bench-facing error types.
 
-Same shape as the CLI's: an expected failure is one clean line and exit code 1,
-never a traceback. The harness is run by hand, often after a long ingest, so a
-message that names the remedy is worth more here than anywhere else.
+Deliberately dependency-free — no typer, and nothing from the pipeline. The
+scorer reaches these (a malformed run file is a ``BenchError``) and it must
+import nothing from the pipeline, transitively included, so that it cannot
+measure the thing it is comparing. Rendering these as one clean line is a
+front-end concern and lives with the front end, in ``main``, where typer
+already is.
 """
-
-import functools
-from collections.abc import Callable
-from typing import TypeVar
-
-import typer
-
-from booksmart_core.errors import BooksmartError
-
-F = TypeVar("F", bound=Callable[..., object])
-
-
-def render_error(message: str) -> None:
-    typer.secho(f"error: {message}", fg=typer.colors.RED, err=True)
-
-
-def handle_errors(fn: F) -> F:
-    @functools.wraps(fn)
-    def wrapper(*args: object, **kwargs: object) -> object:
-        try:
-            return fn(*args, **kwargs)
-        except (BenchError, BooksmartError) as exc:
-            render_error(str(exc))
-            raise typer.Exit(1) from exc
-
-    return wrapper  # type: ignore[return-value]
 
 
 class BenchError(Exception):
@@ -38,3 +15,8 @@ class BenchError(Exception):
 
 class AssetsNotFoundError(BenchError):
     """No assets checkout was given, or the given path is not one."""
+
+
+class SourceMissingError(BenchError):
+    """A book's source file is absent from ``sources/``, or does not match the
+    sha256 its ``book.yaml`` pins."""

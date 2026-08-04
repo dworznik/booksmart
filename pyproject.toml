@@ -25,6 +25,10 @@ dev = [
     "mypy>=2.1.0",
     "pytest>=9.1.1",
     "types-PyYAML>=6.0",
+    # The CLI and bench suites both generate real PDFs to ingest. Declared here
+    # rather than as a package dependency because neither package needs it at
+    # runtime — it reaches them today only as a transitive of core's parser.
+    "pymupdf>=1.28.0",
 ]
 
 [tool.pytest.ini_options]

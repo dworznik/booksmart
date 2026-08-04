@@ -199,6 +199,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "mypy" },
+    { name = "pymupdf" },
     { name = "pytest" },
     { name = "types-pyyaml" },
 ]
@@ -213,6 +214,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "mypy", specifier = ">=2.1.0" },
+    { name = "pymupdf", specifier = ">=1.28.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "types-pyyaml", specifier = ">=6.0" },
 ]

@@ -28,7 +28,7 @@ loadable.
 """
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, get_args
@@ -113,6 +113,12 @@ class BookTruth:
     area: str
     source_sha256: str | None
     nodes: dict[str, TocNode]
+    # Where the artifact is expected, relative to the assets root. Named in
+    # book.yaml rather than derived, because a book's file extension is a
+    # property of the artifact, not of the slug.
+    source_file: str | None = None
+    authors: tuple[str, ...] = ()
+
     queries: tuple[Query, ...] = ()
     concepts: tuple[Concept, ...] = ()
     index_pairs: tuple[IndexPair, ...] = ()
@@ -122,6 +128,15 @@ class BookTruth:
     # Entries the loader could not turn into nodes at all, described well enough
     # for the lint to name them.
     malformed_nodes: tuple[str, ...] = ()
+
+    @property
+    def is_pinned(self) -> bool:
+        """Whether truth is tied to specific bytes yet. Until the source lands,
+        book.yaml carries a placeholder where the hash will go."""
+        pinned = self.source_sha256
+        if pinned is None:
+            return False
+        return not pinned.upper().startswith(PLACEHOLDER)
 
 
 @dataclass(frozen=True)
@@ -162,14 +177,18 @@ def load_truth(assets: Path) -> Truth:
 def _load_book(directory: Path) -> BookTruth:
     identity = _read_mapping(directory / "book.yaml")
     nodes, duplicates, malformed = _read_toc(directory / "toc.yaml")
-    source = identity.get("source")
-    sha256 = source.get("sha256") if isinstance(source, dict) else None
+    raw_source = identity.get("source")
+    source: Mapping[str, object] = raw_source if isinstance(raw_source, dict) else {}
+    sha256 = source.get("sha256")
+    source_file = source.get("file")
 
     return BookTruth(
         slug=str(identity.get("slug") or directory.name),
         title=str(identity.get("title", "")),
         area=str(identity.get("area", "")),
         source_sha256=None if sha256 is None else str(sha256),
+        source_file=None if source_file is None else str(source_file),
+        authors=_strings(identity, "authors"),
         nodes=nodes,
         duplicate_ids=duplicates,
         malformed_nodes=malformed,
@@ -329,7 +348,7 @@ def _lint_book(slug: str, book: BookTruth) -> list[Finding]:
         )
     for malformed in book.malformed_nodes:
         findings.append(Finding("error", f"{where}/toc.yaml", malformed))
-    if not book.source_sha256 or book.source_sha256.upper().startswith(PLACEHOLDER):
+    if not book.is_pinned:
         findings.append(
             Finding(
                 "warning",
