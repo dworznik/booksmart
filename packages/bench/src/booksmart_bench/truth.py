@@ -113,6 +113,11 @@ class BookTruth:
     area: str
     source_sha256: str | None
     nodes: dict[str, TocNode]
+    # Where the artifact is expected, relative to the assets root. Named in
+    # book.yaml rather than derived, because a book's file extension is a
+    # property of the artifact, not of the slug.
+    source_file: str | None = None
+    authors: tuple[str, ...] = ()
     queries: tuple[Query, ...] = ()
     concepts: tuple[Concept, ...] = ()
     index_pairs: tuple[IndexPair, ...] = ()
@@ -162,14 +167,18 @@ def load_truth(assets: Path) -> Truth:
 def _load_book(directory: Path) -> BookTruth:
     identity = _read_mapping(directory / "book.yaml")
     nodes, duplicates, malformed = _read_toc(directory / "toc.yaml")
-    source = identity.get("source")
-    sha256 = source.get("sha256") if isinstance(source, dict) else None
+    source = identity.get("source") if isinstance(identity.get("source"), dict) else {}
+    assert isinstance(source, dict)
+    sha256 = source.get("sha256")
+    source_file = source.get("file")
 
     return BookTruth(
         slug=str(identity.get("slug") or directory.name),
         title=str(identity.get("title", "")),
         area=str(identity.get("area", "")),
         source_sha256=None if sha256 is None else str(sha256),
+        source_file=None if source_file is None else str(source_file),
+        authors=_strings(identity, "authors"),
         nodes=nodes,
         duplicate_ids=duplicates,
         malformed_nodes=malformed,

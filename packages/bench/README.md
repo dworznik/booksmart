@@ -19,11 +19,36 @@ Measurement is TREC-shaped, and the three artefacts stay separable:
 One verb per artefact boundary:
 
 ```console
-booksmart-bench ingest    # build a corpus (the only expensive verb)
-booksmart-bench run       # execute queries, emit a run file
-booksmart-bench score     # run file × truth -> scores (pure)
-booksmart-bench report    # render two runs side by side (pure)
+$ booksmart-bench ingest <area|book> [--force]      # build a corpus
+$ booksmart-bench run <family> <area>               # emit a run file
+$ booksmart-bench score <run-file> [--out s.json]   # run file x truth -> scores
+$ booksmart-bench report <baseline> <candidate>     # two runs, side by side
 ```
+
+`ingest` is the only verb that spends money, and it is idempotent: a book whose
+bytes and configuration are unchanged is skipped. `score` and `report` are pure
+— no pipeline, no corpus, no network — and `report` exits non-zero on a
+regression so it can gate a change without anyone reading the table first.
+
+## What is measured
+
+| dimension | score |
+| --- | --- |
+| recall | MRR (primary) + hit@5, binary location-level judgements |
+| structure fidelity | P/R/F1 over (chapter, section) nodes vs the authored ToC |
+| extraction coverage | recall against the concept inventory |
+| summary faithfulness | mean claim-support ratio |
+| cost & throughput | tokens and wall time per Stage — **tracked, never scored** |
+
+Per-slice figures are diagnostics: they say where a difference came from and
+decide nothing. Only the pooled aggregate carries the regression verdict, and
+there is no blended headline number — an MRR and an F1 do not average into
+anything actionable.
+
+Nothing is silently dropped. A gated slice, a query truth holds that a run never
+asked, a book a run names that truth does not cover — each is reported under
+"not measured", because a slice that disappears from a report reads as one that
+passed.
 
 ## Assets and corpora
 

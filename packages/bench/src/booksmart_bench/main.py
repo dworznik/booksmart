@@ -30,6 +30,7 @@ from booksmart_core.errors import BooksmartError
 
 from booksmart_bench.config import corpus_home, load_settings, resolve_assets
 from booksmart_bench.errors import BenchError
+from booksmart_bench.ingest import IngestOutcome, ingest_scope
 from booksmart_bench.report import render
 from booksmart_bench.scoring import Scores, compare, load_run
 from booksmart_bench.scoring import score as score_run
@@ -74,7 +75,7 @@ VERBS = {
 # Specced but not built. Each still resolves and lints its inputs for real
 # before refusing, and exits non-zero — a stub exiting 0 would read as a passing
 # benchmark in a script. This set shrinks as the waves land.
-UNIMPLEMENTED = frozenset({"ingest", "run"})
+UNIMPLEMENTED = frozenset({"run"})
 
 app = typer.Typer(
     help="Benchmark booksmart's ingestion and recall against hand-authored truth.",
@@ -146,10 +147,61 @@ def _report_findings(findings: tuple[Finding, ...]) -> None:
 
 @app.command()
 @handle_errors
-def ingest(assets: AssetsOption = None) -> None:
+def ingest(
+    scope: Annotated[
+        str, typer.Argument(help="A book slug, or an area name to ingest every book in it.")
+    ],
+    assets: AssetsOption = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Re-ingest books already in this corpus.")
+    ] = False,
+) -> None:
     """Build (or extend) this configuration's corpus by ingesting the books
-    truth is authored against. The only verb that spends money."""
-    _resolve_and_report("ingest", assets)
+    truth is authored against. The only verb that spends money.
+
+    Idempotent: a book whose bytes and configuration are unchanged is skipped,
+    because ingest is expensive and recall is not.
+    """
+    resolved, truth = _prepare(assets)
+    settings = load_settings()
+    console.print(f"corpus: [cyan]{escape(str(corpus_home(settings)))}[/cyan]")
+
+    outcome = ingest_scope(
+        resolved,
+        truth,
+        scope,
+        settings,
+        force=force,
+        on_stage=lambda slug, stage: console.print(f"  {escape(slug)} • {stage}…"),
+    )
+    _print_ingest(outcome)
+    if any(book.status == "failed" for book in outcome.books):
+        raise BenchError("one or more books failed to ingest; see the table above")
+
+
+def _print_ingest(outcome: IngestOutcome) -> None:
+    table = Table("book", "status", "wall", "in", "out", "embed")
+    for book in outcome.books:
+        table.add_row(
+            escape(book.slug),
+            _status_markup(book.status),
+            f"{book.wall_seconds:.1f}s" if book.wall_seconds else "—",
+            *(
+                f"{sum(getattr(stage, field) for stage in book.stages):,}"
+                for field in ("input_tokens", "output_tokens", "embedding_tokens")
+            ),
+        )
+    console.print(table)
+    for book in outcome.books:
+        if book.error:
+            console.print(f"[red]{escape(book.slug)}[/red]: {escape(book.error)}")
+    for note in outcome.notes:
+        console.print(f"[yellow]note[/yellow] {escape(note)}")
+
+
+def _status_markup(status: str) -> str:
+    colour = {"succeeded": "green", "failed": "red", "skipped": "yellow"}.get(status, "white")
+    return f"[{colour}]{status}[/{colour}]"
 
 
 @app.command()

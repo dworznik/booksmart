@@ -23,6 +23,9 @@ def args_for(verb: str, assets: Path, run_file: Path) -> list[str]:
     """The positional arguments a verb needs, so a test about assets handling
     is not really a test about missing arguments."""
     positional = {
+        # The scope is never reached in these tests — the assets and truth gates
+        # fire first — but typer still demands the argument.
+        "ingest": ["a-scope"],
         "score": [str(run_file)],
         "report": [str(run_file), str(run_file)],
     }.get(verb, [])
