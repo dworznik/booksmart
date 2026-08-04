@@ -8,7 +8,7 @@ along exactly those seams:
     ingest   build a corpus for one pipeline configuration — the only expensive
              verb, and the reason corpora are keyed and reused
     run      execute the benchmarks against a corpus, emit a run file
-    score    run file × truth -> scores (pure)
+    score    run file x truth -> scores (pure)
     report   render two runs side by side (pure)
 
 Every verb resolves its assets checkout up front, so a wrong ``--assets`` is a
@@ -20,6 +20,7 @@ from typing import Annotated, Optional
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from booksmart_bench.config import corpus_home, load_settings, resolve_assets
 from booksmart_bench.errors import BenchError, handle_errors
@@ -58,8 +59,8 @@ def _resolve_and_report(verb: str, assets: Path | None) -> None:
     satisfy scores zero and reads as a retrieval regression, not as a typo.
     """
     resolved = resolve_assets(assets)
-    console.print(f"assets: [cyan]{resolved}[/cyan]")
-    console.print(f"corpus: [cyan]{corpus_home(load_settings())}[/cyan]")
+    console.print(f"assets: [cyan]{escape(str(resolved))}[/cyan]")
+    console.print(f"corpus: [cyan]{escape(str(corpus_home(load_settings())))}[/cyan]")
 
     truth = load_truth(resolved)
     console.print(
@@ -74,10 +75,20 @@ def _resolve_and_report(verb: str, assets: Path | None) -> None:
 def _report_findings(findings: tuple[Finding, ...]) -> None:
     """Show every finding, then stop on the ones that make truth unscoreable.
     Warnings are printed and survived: truth for an area is authored before every
-    book in it exists, and that half-finished state has to stay workable."""
+    book in it exists, and that half-finished state has to stay workable.
+
+    Findings quote hand-authored truth — query text, terms, ToC titles — and Rich
+    reads ``[...]`` as markup, so anything bracketed would be dropped from the
+    report or, for a stray closing tag, raise instead of printing. A reporter
+    that silently deletes part of its report is worse than no reporter, hence
+    the escaping.
+    """
     for finding in findings:
         colour = "red" if finding.severity == "error" else "yellow"
-        console.print(f"[{colour}]{finding.severity}[/{colour}] {finding.where}: {finding.message}")
+        console.print(
+            f"[{colour}]{finding.severity}[/{colour}] "
+            f"{escape(finding.where)}: {escape(finding.message)}"
+        )
 
     failures = errors_in(findings)
     if failures:

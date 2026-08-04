@@ -80,6 +80,35 @@ class TestTruthGate:
         assert "9.9" in result.stdout
         assert "not implemented" not in result.stderr
 
+    def test_bracketed_truth_survives_into_the_report(
+        self, runner: CliRunner, write_truth: Callable[..., Path]
+    ) -> None:
+        """Findings quote hand-authored truth, and the console reads brackets as
+        markup — so a bracketed term would be dropped from the very report that
+        exists to name it."""
+        assets = write_truth(
+            "a-book",
+            index_pairs=[{"term": "list [xs]", "loc": "nowhere"}],
+        )
+
+        result = runner.invoke(app, ["score", "--assets", str(assets)])
+
+        assert "[xs]" in result.stdout
+
+    def test_a_stray_closing_tag_in_truth_does_not_crash_the_verb(
+        self, runner: CliRunner, write_truth: Callable[..., Path]
+    ) -> None:
+        """Unescaped, this raises MarkupError out of the reporter itself."""
+        assets = write_truth(
+            "a-book",
+            index_pairs=[{"term": "see [/ref]", "loc": "nowhere"}],
+        )
+
+        result = runner.invoke(app, ["score", "--assets", str(assets)])
+
+        assert result.exit_code == 1
+        assert "[/ref]" in result.stdout
+
     def test_warnings_are_shown_but_survived(
         self, runner: CliRunner, write_truth: Callable[..., Path]
     ) -> None:

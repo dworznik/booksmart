@@ -8,6 +8,7 @@ Shared helpers are fixtures rather than module imports so this suite stays a
 plain directory (no ``__init__.py``) alongside the core and CLI suites.
 """
 
+import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -18,15 +19,14 @@ from typer.testing import CliRunner
 
 @pytest.fixture(autouse=True)
 def isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
-    """No ambient bench or booksmart configuration reaches a test."""
-    for leaked in (
-        "BOOKSMART_BENCH_ASSETS",
-        "BOOKSMART_BENCH_HOME",
-        "BOOKSMART_LLM_PROVIDER",
-        "BOOKSMART_LLM_MODEL",
-        "BOOKSMART_EMBEDDING_PROVIDER",
-        "BOOKSMART_EMBEDDING_MODEL",
-    ):
+    """No ambient bench or booksmart configuration reaches a test.
+
+    By prefix rather than by name: ``load_settings`` reads ``BOOKSMART_<FIELD>``
+    for every field ``Settings`` has, so a list of names would have to be
+    extended in lockstep with a model in another package — and the failure mode
+    is a developer's own shell quietly changing what a test measures.
+    """
+    for leaked in [name for name in os.environ if name.startswith("BOOKSMART_")]:
         monkeypatch.delenv(leaked, raising=False)
     # A home under tmp_path by default, so nothing ever touches the real one.
     monkeypatch.setenv("BOOKSMART_BENCH_HOME", str(tmp_path / "bench-home"))

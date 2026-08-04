@@ -18,7 +18,7 @@ Measurement is TREC-shaped, and the three artefacts stay separable:
 
 One verb per artefact boundary:
 
-```
+```console
 booksmart-bench ingest    # build a corpus (the only expensive verb)
 booksmart-bench run       # execute queries, emit a run file
 booksmart-bench score     # run file × truth -> scores (pure)
