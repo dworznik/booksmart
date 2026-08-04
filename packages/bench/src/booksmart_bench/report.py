@@ -13,12 +13,16 @@ the pooled aggregate carries the regression call.
 Like the scorer it renders, this imports nothing from the pipeline.
 """
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
 
 from booksmart_bench.scoring import THRESHOLDS, Cost, RecallScore, Scores, Verdict
 
-# Ordered so the page reads from the dimension a reader most likely came for.
-DIMENSION_ORDER = ("recall", "structure", "coverage", "faithfulness")
+# Ordered so the page reads from the dimension a reader most likely came for,
+# then anything else THRESHOLDS knows about — a new dimension appears in the
+# table without an edit here, rather than being silently omitted from it.
+_PREFERRED = ("recall", "structure", "coverage", "faithfulness")
+DIMENSION_ORDER = (*_PREFERRED, *sorted(set(THRESHOLDS) - set(_PREFERRED)))
 
 
 def render(baseline: Scores, candidate: Scores, verdict: Verdict) -> str:
@@ -144,17 +148,34 @@ def _diagnostics(baseline: Scores, candidate: Scores) -> list[str]:
             )
         lines.append("")
 
-    attributions = [
-        s.recall.attribution
-        for s in (baseline, candidate)
-        if s.recall is not None and s.recall.attribution is not None
-    ]
-    if attributions:
+    areas = sorted({*_areas(baseline), *_areas(candidate)})
+    if areas:
         lines += [
-            "Cross-book attribution (right book anywhere in the top k): "
-            + " -> ".join(f"{value:.3f}" for value in attributions),
+            "### Recall by area",
             "",
+            "| area | baseline MRR | candidate MRR | n |",
+            "| --- | --- | --- | --- |",
         ]
+        for area in areas:
+            base_slice = _area_slice(baseline, area)
+            cand_slice = _area_slice(candidate, area)
+            judged = cand_slice or base_slice
+            lines.append(
+                f"| {area} | {_cell(base_slice.mrr if base_slice else None)} | "
+                f"{_cell(cand_slice.mrr if cand_slice else None)} | "
+                f"{judged.judged if judged else 0} |"
+            )
+        lines.append("")
+
+    if baseline.recall is not None or candidate.recall is not None:
+        base_attr = baseline.recall.attribution if baseline.recall else None
+        cand_attr = candidate.recall.attribution if candidate.recall else None
+        if base_attr is not None or cand_attr is not None:
+            lines += [
+                "Cross-book attribution (right book anywhere in the top k) — "
+                f"baseline {_cell(base_attr)}, candidate {_cell(cand_attr)}.",
+                "",
+            ]
 
     below = candidate.faithfulness.below_bar if candidate.faithfulness else ()
     if below:
@@ -188,7 +209,54 @@ def _cost(baseline: Scores, candidate: Scores) -> list[str]:
             f"| {label} | {_raw(baseline.cost, attribute)} | {_raw(candidate.cost, attribute)} |"
         )
     lines.append("")
+    lines += _per_stage(baseline, candidate)
     return lines
+
+
+def _per_stage(baseline: Scores, candidate: Scores) -> list[str]:
+    """The breakdown the Run row cannot hold and booksmart#65 will eventually
+    carry. Which Stage a cost belongs to is the whole question when a pipeline
+    change makes a run more expensive."""
+    stages: dict[str, dict[str, Mapping[str, Any]]] = {}
+    for side, scores in (("baseline", baseline), ("candidate", candidate)):
+        for entry in scores.cost.per_stage if scores.cost else ():
+            name = str(entry.get("stage", ""))
+            stages.setdefault(name, {})[side] = entry
+    if not stages:
+        return []
+
+    lines = [
+        "### By Stage",
+        "",
+        "| stage | baseline s | candidate s | baseline tokens | candidate tokens |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for name, sides in stages.items():
+        lines.append(
+            f"| {name} | {_stage_cell(sides.get('baseline'), 'seconds')} | "
+            f"{_stage_cell(sides.get('candidate'), 'seconds')} | "
+            f"{_stage_tokens(sides.get('baseline'))} | "
+            f"{_stage_tokens(sides.get('candidate'))} |"
+        )
+    lines.append("")
+    return lines
+
+
+def _stage_cell(entry: Mapping[str, Any] | None, key: str) -> str:
+    if entry is None:
+        return "—"
+    value = entry.get(key)
+    return "—" if value is None else f"{float(value):.2f}"
+
+
+def _stage_tokens(entry: Mapping[str, Any] | None) -> str:
+    if entry is None:
+        return "—"
+    total = sum(
+        int(entry.get(field, 0) or 0)
+        for field in ("input_tokens", "output_tokens", "embedding_tokens")
+    )
+    return f"{total:,}"
 
 
 def _not_measured(baseline: Scores, candidate: Scores) -> list[str]:
@@ -223,6 +291,16 @@ def _kind_slice(scores: Scores, kind: str) -> RecallScore | None:
     if scores.recall is None:
         return None
     return scores.recall.per_kind.get(kind)
+
+
+def _areas(scores: Scores) -> Iterable[str]:
+    return () if scores.recall is None else scores.recall.per_area.keys()
+
+
+def _area_slice(scores: Scores, area: str) -> RecallScore | None:
+    if scores.recall is None:
+        return None
+    return scores.recall.per_area.get(area)
 
 
 def _cell(value: float | None) -> str:

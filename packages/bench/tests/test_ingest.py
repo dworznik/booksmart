@@ -173,6 +173,90 @@ class TestIdempotency:
         assert second.books[0].status == "succeeded"
 
 
+class TestStageFailure:
+    def test_a_failing_stage_is_recorded_not_raised(
+        self, assets: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same contract as core's Runner: an expected Stage failure lands on
+        the Run, it does not come out of the Runner."""
+
+        def boom(*args: object, **kwargs: object) -> object:
+            raise RuntimeError("stage exploded")
+
+        monkeypatch.setattr("booksmart_bench.ingest.run_summaries", boom)
+
+        outcome = ingest(assets)
+
+        assert outcome.books[0].status == "failed"
+        assert "stage exploded" in (outcome.books[0].error or "")
+
+    def test_a_failed_stage_does_not_commit_its_partial_writes(
+        self, assets: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """run_extraction deletes the book's knowledge objects before writing
+        the replacements. Without a rollback, a failure between the two commits
+        the deletion and leaves the corpus permanently emptied for that book."""
+        from booksmart_bench.config import load_settings
+        from booksmart_core.models import KnowledgeObject
+
+        ingest(assets)
+        with Corpus.open(load_settings()) as corpus, corpus.session_factory() as session:
+            before = session.scalar(select(func.count()).select_from(KnowledgeObject))
+        assert before
+
+        def delete_then_fail(session: object, book_id: object, **kwargs: object) -> object:
+            # Exactly run_extraction's shape: clear the book's objects, then die
+            # before the commit that would write the replacements.
+            from sqlalchemy import delete
+
+            session.execute(  # type: ignore[attr-defined]
+                delete(KnowledgeObject).where(KnowledgeObject.book_id == book_id)
+            )
+            raise RuntimeError("failed after clearing knowledge")
+
+        monkeypatch.setattr("booksmart_bench.ingest.run_extraction", delete_then_fail)
+        ingest(assets, force=True)
+
+        with Corpus.open(load_settings()) as corpus, corpus.session_factory() as session:
+            after = session.scalar(select(func.count()).select_from(KnowledgeObject))
+        assert after == before
+
+    def test_a_failure_keeps_the_provenance_of_books_already_done(
+        self,
+        write_truth: Callable[..., Path],
+        place_source: Callable[..., str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Losing the record of an hour already spent is the one thing ingest
+        must never do."""
+        from booksmart_bench.config import load_settings
+
+        root = write_truth("book-one", book={"title": "One", "area": "an-area"})
+        write_truth("book-two", root=root, book={"title": "Two", "area": "an-area"})
+        for slug in ("book-one", "book-two"):
+            place_source(root, slug)
+
+        # An error the Runner does not catch — registration, or anything else
+        # outside the Stage loop — escapes ingest_scope entirely.
+        calls = {"n": 0}
+        real = __import__("booksmart_bench.ingest", fromlist=["_register"])._register
+
+        def fail_on_second_book(*args: object, **kwargs: object) -> object:
+            calls["n"] += 1
+            if calls["n"] > 1:
+                raise RuntimeError("registration exploded")
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr("booksmart_bench.ingest._register", fail_on_second_book)
+        with pytest.raises(RuntimeError, match="registration exploded"):
+            ingest(root, "an-area")
+
+        with Corpus.open(load_settings()) as corpus:
+            recorded = read_provenance(corpus.home)
+        assert "book-one" in recorded.books
+        assert "book-two" not in recorded.books
+
+
 class TestScope:
     def test_an_area_ingests_every_book_in_it(
         self, write_truth: Callable[..., Path], place_source: Callable[..., str]

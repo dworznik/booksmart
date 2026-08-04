@@ -26,10 +26,17 @@ from typing import Any
 
 from sqlalchemy import select
 
+from sqlalchemy.orm import Session
+
 from booksmart_core.config import Settings
-from booksmart_core.llm import build_embedding_provider, build_llm_provider
+from booksmart_core.llm import (
+    EmbeddingProvider,
+    LLMProvider,
+    build_embedding_provider,
+    build_llm_provider,
+)
 from booksmart_core.models import Book
-from booksmart_core.parsing import build_default_chain
+from booksmart_core.parsing import ParserChain, build_default_chain
 from booksmart_core.runner import SCOPE_STAGES, finalize_run, start_run
 from booksmart_core.stages import (
     LLM_STAGES,
@@ -54,9 +61,6 @@ PROVENANCE_FILE = "provenance.json"
 # incremental scope is a product affordance, and a benchmark that measured a
 # partially-rebuilt corpus would not be measuring anything reproducible.
 FULL_SCOPE = "full"
-
-PLACEHOLDER_HASH_PREFIX = "TBD"
-
 
 @dataclass(frozen=True)
 class StageTiming:
@@ -163,8 +167,8 @@ def locate_source(assets: Path, book: BookTruth) -> tuple[Path, str]:
     with path.open("rb") as stream:
         digest = hash_stream(stream)
 
-    pinned = book.source_sha256
-    if pinned and not pinned.upper().startswith(PLACEHOLDER_HASH_PREFIX):
+    if book.is_pinned:
+        pinned = book.source_sha256
         if pinned != digest:
             raise SourceMissingError(
                 f"{book.slug}: sha256 mismatch. {relative} hashes to {digest}, but "
@@ -179,12 +183,12 @@ def locate_source(assets: Path, book: BookTruth) -> tuple[Path, str]:
 
 def _dispatch(
     stage: Stage,
-    session: Any,
+    session: Session,
     book_id: uuid.UUID,
     corpus: Corpus,
-    llm: Any,
-    embedder: Any,
-    chain: Any,
+    llm: LLMProvider,
+    embedder: EmbeddingProvider,
+    chain: ParserChain,
 ) -> StageReport:
     if stage == "parse":
         return run_parse(session, book_id, chain=chain, storage=corpus.storage)
@@ -241,7 +245,13 @@ def run_pipeline(
                         counts=dict(report.counts),
                     )
                 )
-        except Exception as exc:  # noqa: BLE001 — recorded on the Run, like core's Runner
+        except Exception as exc:
+            # Discard the failed Stage's partial writes before finalizing, or
+            # finalize_run's commit would persist them. A Stage replaces its
+            # output wholesale (ADR 0002), so a failure between the delete and
+            # the write would otherwise leave the corpus permanently emptied for
+            # that book — with only a "failed" row to explain it.
+            session.rollback()
             status = "failed"
             error = f"{type(exc).__name__}: {exc}"
 
@@ -284,8 +294,7 @@ def ingest_scope(
     notes: list[str] = [
         f"{book.slug}: source is not pinned; add sha256 {digest} to its book.yaml"
         for book, _, digest in located
-        if not book.source_sha256
-        or book.source_sha256.upper().startswith(PLACEHOLDER_HASH_PREFIX)
+        if not book.is_pinned
     ]
 
     outcomes: list[BookIngest] = []
@@ -320,31 +329,46 @@ def ingest_scope(
                 )
             )
             if status == "succeeded":
-                provenance.books[book.slug] = {
-                    "book_id": str(book_id),
-                    "run_id": run_id,
-                    "sha256": digest,
-                    "ingested_at": datetime.now(UTC).isoformat(),
-                    "wall_seconds": wall,
-                    "stages": [
-                        {
-                            "stage": timing.stage,
-                            "seconds": timing.seconds,
-                            "input_tokens": timing.input_tokens,
-                            "output_tokens": timing.output_tokens,
-                            "embedding_tokens": timing.embedding_tokens,
-                            "counts": timing.counts,
-                        }
-                        for timing in timings
-                    ],
-                }
+                provenance.books[book.slug] = _record_of(book_id, run_id, digest, wall, timings)
+                # Written per book, not once at the end: an escape anywhere
+                # later in the scope would otherwise discard the record of every
+                # book already ingested, and re-spend all of it next run.
+                write_provenance(corpus.home, provenance)
 
-        write_provenance(corpus.home, provenance)
         home = corpus.home
 
     return IngestOutcome(
         snapshot=home.name, home=home, books=tuple(outcomes), notes=tuple(notes)
     )
+
+
+def _record_of(
+    book_id: uuid.UUID,
+    run_id: str,
+    digest: str,
+    wall: float,
+    timings: tuple[StageTiming, ...],
+) -> dict[str, Any]:
+    """One book's entry in the corpus provenance: what was ingested, from which
+    bytes, and what each Stage cost — the breakdown the Run row cannot hold."""
+    return {
+        "book_id": str(book_id),
+        "run_id": run_id,
+        "sha256": digest,
+        "ingested_at": datetime.now(UTC).isoformat(),
+        "wall_seconds": wall,
+        "stages": [
+            {
+                "stage": timing.stage,
+                "seconds": timing.seconds,
+                "input_tokens": timing.input_tokens,
+                "output_tokens": timing.output_tokens,
+                "embedding_tokens": timing.embedding_tokens,
+                "counts": timing.counts,
+            }
+            for timing in timings
+        ],
+    }
 
 
 def _per_book_callback(

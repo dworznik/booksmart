@@ -258,6 +258,131 @@ class TestRecall:
         assert any("grommets" in note for note in result.unasked)
 
 
+class TestResultMatching:
+    """The documented run-file shape carries `q` and `hits` and nothing else;
+    the scope keys are an optional refinement, not a requirement."""
+
+    def test_a_result_without_a_scope_still_matches_its_query(
+        self, write_truth: Callable[..., Path], write_run: Callable[..., Path]
+    ) -> None:
+        result = scored(
+            write_truth,
+            write_run,
+            queries=[
+                {"q": "grommets", "kind": "exact-term", "expects": [{"loc": "1.2"}], "why": "W."}
+            ],
+            results=[{"q": "grommets", "hits": hits("1.2")}],
+        )
+
+        assert result.recall is not None
+        assert result.recall.mrr == 1.0
+        assert not result.unasked
+
+    def test_an_explicit_scope_is_preferred_over_a_scopeless_result(
+        self, write_truth: Callable[..., Path], write_run: Callable[..., Path]
+    ) -> None:
+        result = scored(
+            write_truth,
+            write_run,
+            queries=[
+                {"q": "grommets", "kind": "exact-term", "expects": [{"loc": "1.2"}], "why": "W."}
+            ],
+            results=[
+                {"q": "grommets", "hits": hits("9")},
+                {"q": "grommets", "book": "placeholder-book", "hits": hits("1.2")},
+            ],
+        )
+
+        assert result.recall is not None
+        assert result.recall.mrr == 1.0
+
+
+class TestPlaceholderExpectations:
+    def test_a_placeholder_expectation_is_reported_as_such_not_as_unasked(
+        self, write_truth: Callable[..., Path], write_run: Callable[..., Path]
+    ) -> None:
+        """Truth for an area is authored before every book in it exists. Calling
+        that "never asked" blames the run for a gap in the truth."""
+        assets = write_truth(
+            "a-book",
+            area="an-area",
+            area_queries=[
+                {
+                    "q": "a cross-book question",
+                    "kind": "conceptual",
+                    "expects": [{"book": "not-yet-authored", "loc": "TBD"}],
+                    "why": "W.",
+                }
+            ],
+        )
+        run = load_run(write_run(results=[{"q": "a cross-book question", "hits": []}]))
+
+        result = score(run, load_truth(assets))
+
+        assert not any("never asked" in note for note in result.unasked)
+        assert any("placeholder" in note for note in result.skipped)
+
+
+class TestPerAreaSlices:
+    def test_area_query_sets_are_sliced_separately(
+        self, write_truth: Callable[..., Path], write_run: Callable[..., Path]
+    ) -> None:
+        """SPEC calls per-area slices diagnostics — they have to exist to be one."""
+        assets = write_truth(
+            "a-book",
+            area="an-area",
+            area_queries=[
+                {
+                    "q": "a cross-book question",
+                    "kind": "conceptual",
+                    "expects": [{"book": "a-book", "loc": "1.1"}],
+                    "why": "W.",
+                }
+            ],
+        )
+        run = load_run(
+            write_run(
+                results=[
+                    {"q": "a cross-book question", "area": "an-area", "hits": hits("1.1")}
+                ]
+            )
+        )
+
+        result = score(run, load_truth(assets))
+
+        assert result.recall is not None
+        assert "an-area" in result.recall.per_area
+
+
+class TestIndexPairs:
+    def test_unscored_index_pairs_are_reported_not_dropped(
+        self, write_truth: Callable[..., Path], write_run: Callable[..., Path]
+    ) -> None:
+        """Truth says section-level pairs are scoreable; until a run asks them,
+        silence would read as a slice that passed."""
+        assets = write_truth("a-book", index_pairs=[{"term": "widget", "loc": "1.1"}])
+
+        result = score(load_run(write_run()), load_truth(assets))
+
+        assert any("index-pair" in note for note in (*result.skipped, *result.unasked))
+
+
+class TestPooledGuards:
+    def test_a_book_with_no_scoreable_nodes_does_not_pool_a_zero(
+        self, write_truth: Callable[..., Path], write_run: Callable[..., Path]
+    ) -> None:
+        """Pooling 0.0 for a book that has nothing to detect would force a
+        regression verdict out of an empty measurement."""
+        assets = write_truth("a-book", toc={"front_matter": [{"id": "p", "title": "Preface"}]})
+        run = load_run(
+            write_run(structure=[{"book": "a-book", "detected": []}])
+        )
+
+        result = score(run, load_truth(assets))
+
+        assert "structure" not in result.pooled
+
+
 class TestGatedSlices:
     def test_a_gated_query_is_skipped_and_reported(
         self, write_truth: Callable[..., Path], write_run: Callable[..., Path]

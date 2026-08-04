@@ -150,6 +150,60 @@ class TestRender:
         assert "1000" in markdown or "1,000" in markdown
         assert "never scored" in markdown.lower()
 
+    def test_per_stage_cost_reaches_the_page(
+        self, write_truth: Callable[..., Path], write_run: Callable[..., Path]
+    ) -> None:
+        """Ingest captures the breakdown precisely because the Run row cannot;
+        rendering only the totals would throw it away again."""
+        base, cand = two_runs(
+            write_truth,
+            write_run,
+            baseline_ranks=("1.2",),
+            candidate_ranks=("1.2",),
+            cost={
+                "input_tokens": 10,
+                "per_stage": [
+                    {"stage": "extraction", "seconds": 12.5, "input_tokens": 900},
+                    {"stage": "embeddings", "seconds": 3.0, "embedding_tokens": 40},
+                ],
+            },
+        )
+
+        markdown = render(base, cand, compare(base, cand))
+
+        assert "extraction" in markdown
+        assert "12.50" in markdown
+
+    def test_area_slices_are_rendered(
+        self, write_truth: Callable[..., Path], write_run: Callable[..., Path]
+    ) -> None:
+        from booksmart_bench.scoring import load_run, score
+        from booksmart_bench.truth import load_truth
+
+        truth = load_truth(
+            write_truth(
+                "placeholder-book",
+                area="an-area",
+                area_queries=[
+                    {
+                        "q": "a cross-book question",
+                        "kind": "conceptual",
+                        "expects": [{"book": "placeholder-book", "loc": "1.1"}],
+                        "why": "W.",
+                    }
+                ],
+            )
+        )
+        results = [{"q": "a cross-book question", "area": "an-area", "hits": hits("1.1")}]
+        both = [
+            score(load_run(write_run(f"{n}.json", results=results)), truth) for n in "ab"
+        ]
+
+        markdown = render(both[0], both[1], compare(both[0], both[1]))
+
+        assert "Recall by area" in markdown
+        assert "an-area" in markdown
+
     def test_skipped_and_unasked_slices_reach_the_page(
         self, write_truth: Callable[..., Path], write_run: Callable[..., Path]
     ) -> None:

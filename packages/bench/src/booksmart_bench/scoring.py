@@ -240,6 +240,8 @@ class RecallScore:
     hit_at_5: float
     judged: int
     per_kind: Mapping[str, "RecallScore"] = field(default_factory=dict)
+    # Cross-book sets, sliced by area. Diagnostics, like per_kind.
+    per_area: Mapping[str, "RecallScore"] = field(default_factory=dict)
     # Area sets only: was the right book anywhere in the top k, regardless of
     # which node inside it came back.
     attribution: float | None = None
@@ -250,6 +252,10 @@ class StructureScore:
     precision: float
     recall: float
     f1: float
+    # How many authored nodes this was measured against. Zero means the book
+    # has nothing a detector could find, which is not the same as a detector
+    # that found nothing.
+    expected: int = 0
     per_book: Mapping[str, "StructureScore"] = field(default_factory=dict)
 
 
@@ -292,7 +298,7 @@ class Scores:
         values: dict[str, float] = {}
         if self.recall is not None and self.recall.judged:
             values["recall"] = self.recall.mrr
-        if self.structure is not None:
+        if self.structure is not None and self.structure.expected:
             values["structure"] = self.structure.f1
         if self.coverage is not None and self.coverage.total:
             values["coverage"] = self.coverage.recall
@@ -319,6 +325,10 @@ class Scores:
                     kind: {"mrr": slice_.mrr, "hit_at_5": slice_.hit_at_5, "judged": slice_.judged}
                     for kind, slice_ in self.recall.per_kind.items()
                 },
+                "per_area": {
+                    area: {"mrr": slice_.mrr, "hit_at_5": slice_.hit_at_5, "judged": slice_.judged}
+                    for area, slice_ in self.recall.per_area.items()
+                },
             }
         if self.structure is not None:
             payload["structure"] = {
@@ -335,6 +345,10 @@ class Scores:
                 "found": self.coverage.found,
                 "total": self.coverage.total,
                 "recall": self.coverage.recall,
+                "per_book": {
+                    book: {"found": s.found, "total": s.total, "recall": s.recall}
+                    for book, s in self.coverage.per_book.items()
+                },
             }
         if self.faithfulness is not None:
             payload["faithfulness"] = {
@@ -361,6 +375,7 @@ def score(run: RunFile, truth: Truth) -> Scores:
     unasked: list[str] = []
 
     recall = _score_recall(run, truth, skipped, unasked)
+    _note_index_pairs(truth, unasked)
     structure = _score_structure(run, truth, skipped)
     coverage = _score_coverage(run, truth, skipped)
     faithfulness = _score_faithfulness(run, skipped)
@@ -381,77 +396,129 @@ def score(run: RunFile, truth: Truth) -> Scores:
 # --- recall -----------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class Judgement:
+    """One query's verdict, kept with the slices it belongs to."""
+
+    kind: str
+    reciprocal: float
+    hit: float
+    area: str | None = None
+    attribution: float | None = None
+
+
 def _score_recall(
     run: RunFile, truth: Truth, skipped: list[str], unasked: list[str]
 ) -> RecallScore | None:
-    asked = {(result.q, result.book, result.area): result for result in run.results}
-    judgements: list[tuple[str, float, float, float | None]] = []
+    asked = _index_results(run.results)
+    judgements: list[Judgement] = []
 
-    key: tuple[str, str | None, str | None]
     for slug, book in sorted(truth.books.items()):
         for query in book.queries:
-            key = (query.q, slug, None)
-            judged = _judge(query, asked.get(key), owner=slug, books=truth.books)
-            _record(query, judged, key, judgements, skipped, unasked, where=f"truth/{slug}")
+            _record(
+                query,
+                _find(asked, query.q, book=slug, area=None),
+                judgements,
+                skipped,
+                unasked,
+                owner=slug,
+                area=None,
+                where=f"truth/{slug}",
+            )
 
     for area, queries in sorted(truth.areas.items()):
         for query in queries:
-            key = (query.q, None, area)
-            judged = _judge(query, asked.get(key), owner=None, books=truth.books)
             _record(
-                query, judged, key, judgements, skipped, unasked, where=f"truth/areas/{area}"
+                query,
+                _find(asked, query.q, book=None, area=area),
+                judgements,
+                skipped,
+                unasked,
+                owner=None,
+                area=area,
+                where=f"truth/areas/{area}",
             )
 
     if not judgements:
         return None
-
     return _aggregate(judgements)
+
+
+def _index_results(results: Sequence[QueryResult]) -> Mapping[str, list[QueryResult]]:
+    grouped: dict[str, list[QueryResult]] = {}
+    for result in results:
+        grouped.setdefault(result.q, []).append(result)
+    return grouped
+
+
+def _find(
+    asked: Mapping[str, list[QueryResult]], q: str, *, book: str | None, area: str | None
+) -> QueryResult | None:
+    """The run's answer to one query.
+
+    A run file may say which query set a result came from, and the documented
+    minimal shape does not — it carries `q` and `hits` alone. So an exact scope
+    match wins, and a result with no scope answers any query with that text.
+    The ambiguous case (the same question in a book's set and an area's, with
+    one unscoped result) resolves to both, which is the reading that loses no
+    measurement.
+    """
+    candidates = asked.get(q, [])
+    for result in candidates:
+        if result.book == book and result.area == area:
+            return result
+    for result in candidates:
+        if result.book is None and result.area is None:
+            return result
+    return None
 
 
 def _record(
     query: Query,
-    judged: tuple[float, float, float | None] | None,
-    key: tuple[str, str | None, str | None],
-    judgements: list[tuple[str, float, float, float | None]],
+    result: QueryResult | None,
+    judgements: list[Judgement],
     skipped: list[str],
     unasked: list[str],
     *,
+    owner: str | None,
+    area: str | None,
     where: str,
 ) -> None:
     if query.gated:
         skipped.append(f"{where}: {query.q!r} is gated; not scored")
         return
-    if judged is None:
-        unasked.append(f"{where}: {query.q!r} was never asked by this run")
-        return
-    reciprocal, hit, attribution = judged
-    judgements.append((query.kind, reciprocal, hit, attribution))
-
-
-def _judge(
-    query: Query,
-    result: QueryResult | None,
-    *,
-    owner: str | None,
-    books: Mapping[str, BookTruth],
-) -> tuple[float, float, float | None] | None:
-    """(reciprocal rank, hit@5, attribution) for one query, or None if unasked.
-
-    Binary location-level judgement: a hit counts when its (book, loc) is one
-    the query says genuinely answers. Best rank wins — `expects` lists every
-    node that answers, not a ranking among them.
-    """
-    if result is None:
-        return None
 
     wanted = {
         (expectation.book or owner or "", expectation.loc)
         for expectation in query.expects
         if not expectation.is_placeholder
     }
-    wanted_books = {book for book, _ in wanted}
     if not wanted:
-        return None
+        # Truth's own gap, not the run's: an area query is authored before every
+        # book it names exists. Blaming the run would read as a retrieval miss.
+        skipped.append(
+            f"{where}: {query.q!r} has only placeholder locations; nothing to score against"
+        )
+        return
+    if result is None:
+        unasked.append(f"{where}: {query.q!r} was never asked by this run")
+        return
+
+    judgements.append(_judge(query, result, wanted, owner=owner, area=area))
+
+
+def _judge(
+    query: Query,
+    result: QueryResult,
+    wanted: set[tuple[str, str]],
+    *,
+    owner: str | None,
+    area: str | None,
+) -> Judgement:
+    """Binary location-level judgement: a hit counts when its (book, loc) is one
+    the query says genuinely answers. Best rank wins — `expects` lists every node
+    that answers, not a ranking among them."""
+    wanted_books = {book for book, _ in wanted}
 
     best_rank: int | None = None
     best_book_rank: int | None = None
@@ -461,37 +528,60 @@ def _judge(
         if hit.book in wanted_books and best_book_rank is None:
             best_book_rank = hit.rank
 
-    reciprocal = 1.0 / best_rank if best_rank else 0.0
-    hit_at_k = 1.0 if best_rank is not None and best_rank <= HIT_AT_K else 0.0
     # Attribution is only meaningful where a query names its book — an
     # area-level question. For a book's own set the answer is always yes.
     attribution: float | None = None
     if owner is None:
-        attribution = (
-            1.0 if best_book_rank is not None and best_book_rank <= HIT_AT_K else 0.0
-        )
-    return reciprocal, hit_at_k, attribution
+        attribution = 1.0 if best_book_rank is not None and best_book_rank <= HIT_AT_K else 0.0
+
+    return Judgement(
+        kind=query.kind,
+        reciprocal=1.0 / best_rank if best_rank else 0.0,
+        hit=1.0 if best_rank is not None and best_rank <= HIT_AT_K else 0.0,
+        area=area,
+        attribution=attribution,
+    )
 
 
-def _aggregate(
-    judgements: Sequence[tuple[str, float, float, float | None]],
-) -> RecallScore:
-    per_kind: dict[str, RecallScore] = {}
-    for kind in sorted({kind for kind, _, _, _ in judgements}):
-        rows = [row for row in judgements if row[0] == kind]
-        per_kind[kind] = RecallScore(
-            mrr=_mean(row[1] for row in rows),
-            hit_at_5=_mean(row[2] for row in rows),
+def _aggregate(judgements: Sequence[Judgement]) -> RecallScore:
+    def summarise(rows: Sequence[Judgement]) -> RecallScore:
+        return RecallScore(
+            mrr=_mean(row.reciprocal for row in rows),
+            hit_at_5=_mean(row.hit for row in rows),
             judged=len(rows),
         )
-    attributions = [row[3] for row in judgements if row[3] is not None]
+
+    per_kind = {
+        kind: summarise([row for row in judgements if row.kind == kind])
+        for kind in sorted({row.kind for row in judgements})
+    }
+    per_area = {
+        area: summarise([row for row in judgements if row.area == area])
+        for area in sorted({row.area for row in judgements if row.area is not None})
+    }
+    attributions = [row.attribution for row in judgements if row.attribution is not None]
+
     return RecallScore(
-        mrr=_mean(row[1] for row in judgements),
-        hit_at_5=_mean(row[2] for row in judgements),
+        mrr=_mean(row.reciprocal for row in judgements),
+        hit_at_5=_mean(row.hit for row in judgements),
         judged=len(judgements),
         per_kind=per_kind,
+        per_area=per_area,
         attribution=_mean(attributions) if attributions else None,
     )
+
+
+def _note_index_pairs(truth: Truth, unasked: list[str]) -> None:
+    """Index pairs are an exact-term recall slice truth already holds, and no
+    run file carries them yet. Reporting the count keeps "nothing is silently
+    dropped" true — the alternative is a slice that is simply invisible."""
+    for slug, book in sorted(truth.books.items()):
+        live = [pair for pair in book.index_pairs if not pair.gated]
+        if live:
+            unasked.append(
+                f"truth/{slug}/index-pairs.yaml: {len(live)} index-pair term(s) "
+                "not asked by this run; the slice is unscored"
+            )
 
 
 # --- structure fidelity -----------------------------------------------------
@@ -522,7 +612,11 @@ def _score_structure(
         return None
     pooled = _prf(matched_total, detected_total, expected_total)
     return StructureScore(
-        precision=pooled.precision, recall=pooled.recall, f1=pooled.f1, per_book=per_book
+        precision=pooled.precision,
+        recall=pooled.recall,
+        f1=pooled.f1,
+        expected=expected_total,
+        per_book=per_book,
     )
 
 
@@ -554,7 +648,7 @@ def _prf(matched: int, detected: int, expected: int) -> StructureScore:
         if precision + recall
         else 0.0
     )
-    return StructureScore(precision=precision, recall=recall, f1=f1)
+    return StructureScore(precision=precision, recall=recall, f1=f1, expected=expected)
 
 
 def _normalise(title: str) -> str:

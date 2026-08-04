@@ -28,7 +28,7 @@ loadable.
 """
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, get_args
@@ -118,6 +118,7 @@ class BookTruth:
     # property of the artifact, not of the slug.
     source_file: str | None = None
     authors: tuple[str, ...] = ()
+
     queries: tuple[Query, ...] = ()
     concepts: tuple[Concept, ...] = ()
     index_pairs: tuple[IndexPair, ...] = ()
@@ -127,6 +128,15 @@ class BookTruth:
     # Entries the loader could not turn into nodes at all, described well enough
     # for the lint to name them.
     malformed_nodes: tuple[str, ...] = ()
+
+    @property
+    def is_pinned(self) -> bool:
+        """Whether truth is tied to specific bytes yet. Until the source lands,
+        book.yaml carries a placeholder where the hash will go."""
+        pinned = self.source_sha256
+        if pinned is None:
+            return False
+        return not pinned.upper().startswith(PLACEHOLDER)
 
 
 @dataclass(frozen=True)
@@ -167,8 +177,8 @@ def load_truth(assets: Path) -> Truth:
 def _load_book(directory: Path) -> BookTruth:
     identity = _read_mapping(directory / "book.yaml")
     nodes, duplicates, malformed = _read_toc(directory / "toc.yaml")
-    source = identity.get("source") if isinstance(identity.get("source"), dict) else {}
-    assert isinstance(source, dict)
+    raw_source = identity.get("source")
+    source: Mapping[str, object] = raw_source if isinstance(raw_source, dict) else {}
     sha256 = source.get("sha256")
     source_file = source.get("file")
 
@@ -338,7 +348,7 @@ def _lint_book(slug: str, book: BookTruth) -> list[Finding]:
         )
     for malformed in book.malformed_nodes:
         findings.append(Finding("error", f"{where}/toc.yaml", malformed))
-    if not book.source_sha256 or book.source_sha256.upper().startswith(PLACEHOLDER):
+    if not book.is_pinned:
         findings.append(
             Finding(
                 "warning",
