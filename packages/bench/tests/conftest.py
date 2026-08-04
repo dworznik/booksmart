@@ -19,6 +19,9 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from booksmart_bench.judge import CLAIM_SYSTEM_PROMPT
+from booksmart_core.llm import LLMResponse
+
 
 @pytest.fixture(autouse=True)
 def isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
@@ -165,15 +168,24 @@ def fake_providers(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture()
 def make_pdf() -> Callable[..., Path]:
-    """Factory: a real PDF with two chapter headings, small enough to ingest
-    quickly. Content is invented — no book text ever lands in this repo."""
+    """Factory: a real PDF with two chapters and two sections, small enough to
+    ingest quickly. Content is invented — no book text ever lands in this repo.
+
+    The headings match ``_DEFAULT_TOC`` above, so a book ingested from this file
+    joins against the default truth tree; the second chapter is deliberately
+    absent from that truth, because a detected node truth does not know is the
+    ordinary case and the harness has to keep saying so.
+    """
 
     def _make(path: Path, body: str = "Widgets mesh with sprockets.") -> Path:
         doc = pymupdf.open()
         page = doc.new_page()
         page.insert_text(
             (72, 72),
-            f"# First Chapter\n\n{body}\n\n# Second Chapter\n\nGrommets seal the joint.",
+            "# First Chapter\n\n"
+            f"## Widgets And Sprockets\n\n{body}\n\n"
+            "## Grommets\n\nGrommets seal the joint.\n\n"
+            "# Second Chapter\n\nSprockets need lubrication.",
         )
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(doc.tobytes())
@@ -213,3 +225,34 @@ def book_defaults() -> dict[str, object]:
 @pytest.fixture()
 def runner() -> CliRunner:
     return CliRunner()
+
+
+class StubLLM:
+    """A stand-in for the judge's provider, answering by which prompt it was
+    given rather than in call order — a sweep makes one call per claim, and a
+    fixed script would have to know how many claims each summary produced.
+
+    Not core's fake provider: that one answers the *pipeline's* prompts, and the
+    judge is deliberately not part of the pipeline.
+    """
+
+    def __init__(
+        self,
+        *,
+        claims: str = '["a claim"]',
+        supported: bool = True,
+        model: str = "a-judge-model",
+    ) -> None:
+        self.model = model
+        self._claims = claims
+        self._supported = supported
+        self.prompts: list[str] = []
+
+    def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
+        self.prompts.append(prompt)
+        text = (
+            self._claims
+            if system == CLAIM_SYSTEM_PROMPT
+            else json.dumps({"supported": self._supported, "why": "a stub verdict"})
+        )
+        return LLMResponse(text=text, model=self.model, input_tokens=1, output_tokens=1)

@@ -30,7 +30,9 @@ from booksmart_core.errors import BooksmartError
 
 from booksmart_bench.config import corpus_home, load_settings, resolve_assets
 from booksmart_bench.errors import BenchError
+from booksmart_bench.execute import DEFAULT_LIMIT, FAMILIES, RunOutcome, execute_run
 from booksmart_bench.ingest import IngestOutcome, ingest_scope
+from booksmart_bench.judge import resolve_judge
 from booksmart_bench.report import render
 from booksmart_bench.scoring import Scores, compare, load_run
 from booksmart_bench.scoring import score as score_run
@@ -71,11 +73,6 @@ VERBS = {
     "score": "compare a run file against truth",
     "report": "render two runs side by side",
 }
-
-# Specced but not built. Each still resolves and lints its inputs for real
-# before refusing, and exits non-zero — a stub exiting 0 would read as a passing
-# benchmark in a script. This set shrinks as the waves land.
-UNIMPLEMENTED = frozenset({"run"})
 
 app = typer.Typer(
     help="Benchmark booksmart's ingestion and recall against hand-authored truth.",
@@ -127,14 +124,6 @@ def _prepare(assets: Path | None) -> tuple[Path, Truth]:
     )
     _report_findings(lint(truth))
     return resolved, truth
-
-
-def _resolve_and_report(verb: str, assets: Path | None) -> None:
-    """A verb that is specced but not built yet: check the inputs for real, then
-    refuse. Exiting 0 here would read as a passing benchmark in a script."""
-    _prepare(assets)
-    print_path("corpus", corpus_home(load_settings()))
-    raise BenchError(f"`{verb}` is not implemented yet — it will {VERBS[verb]}.")
 
 
 def _report_findings(findings: tuple[Finding, ...]) -> None:
@@ -223,9 +212,74 @@ def _status_markup(status: str) -> str:
 
 @app.command()
 @handle_errors
-def run(assets: AssetsOption = None) -> None:
-    """Execute the benchmarks against an existing corpus, emitting a run file."""
-    _resolve_and_report("run", assets)
+def run(
+    family: Annotated[
+        str, typer.Argument(help=f"Which family to execute: {', '.join(sorted(FAMILIES))}.")
+    ],
+    scope: Annotated[
+        str,
+        typer.Argument(
+            help="A book slug, or an area name to also ask that area's cross-book queries."
+        ),
+    ],
+    assets: AssetsOption = None,
+    limit: Annotated[
+        int, typer.Option(help="How many hits each query asks the search path for.")
+    ] = DEFAULT_LIMIT,
+    out: Annotated[
+        Optional[Path], typer.Option(help="Write the run file here instead of <assets>/runs/.")
+    ] = None,
+    judge: Annotated[
+        bool,
+        typer.Option(
+            "--judge/--no-judge",
+            help="Verify summary faithfulness with the pinned cross-family judge.",
+        ),
+    ] = True,
+) -> None:
+    """Execute the benchmarks against an existing corpus, emitting a run file.
+
+    The run file carries resolved locations, never record ids: the join from a
+    hit's record to the ToC node truth names happens here, which is what lets
+    `score` stay a pure comparison.
+    """
+    resolved, truth = _prepare(assets)
+    settings = load_settings()
+    console.print(f"corpus: [cyan]{escape(str(corpus_home(settings)))}[/cyan]")
+
+    judge_config = resolve_judge(settings) if judge else None
+    if judge_config is not None:
+        console.print(
+            f"judge: [cyan]{escape(judge_config.provider)}[/cyan] "
+            f"{escape(judge_config.model)} (prompt v{judge_config.prompt_version})"
+        )
+
+    outcome = execute_run(
+        resolved,
+        truth,
+        family,
+        scope,
+        settings,
+        limit=limit,
+        out=out,
+        judge=judge_config,
+        on_progress=lambda line: console.print(f"  {escape(line)}"),
+    )
+    _print_run(outcome)
+
+
+def _print_run(outcome: RunOutcome) -> None:
+    table = Table("run", "books", "queries asked", "summaries judged")
+    table.add_row(
+        escape(outcome.run_id),
+        escape(", ".join(outcome.books)),
+        str(outcome.asked),
+        str(outcome.judged),
+    )
+    console.print(table)
+    for note in outcome.notes:
+        console.print(f"[yellow]note[/yellow] {escape(note)}")
+    console.print(f"wrote [cyan]{escape(str(outcome.path))}[/cyan]")
 
 
 @app.command()

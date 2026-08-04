@@ -1,8 +1,8 @@
-"""The four verbs: one per artefact boundary, all stubbed for now.
+"""The four verbs: one per artefact boundary.
 
-Each verb resolves its inputs for real before refusing to do the work it does
-not implement yet — so a misconfigured assets path is reported now, not in the
-wave that fills the verb in.
+Every verb resolves its assets checkout and lints truth before doing anything —
+so a misconfigured path or a location nothing can satisfy is reported before an
+afternoon of ingesting, not after it.
 """
 
 from collections.abc import Callable
@@ -11,12 +11,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from booksmart_bench.main import UNIMPLEMENTED, VERBS, app
+from booksmart_bench.main import VERBS, app
 
 VERB_NAMES = sorted(VERBS)
-# Verbs still specced-but-unbuilt, and the arguments each verb needs before it
-# will even look at `--assets`.
-STUB_NAMES = sorted(UNIMPLEMENTED)
 
 
 def args_for(verb: str, assets: Path, run_file: Path) -> list[str]:
@@ -26,6 +23,7 @@ def args_for(verb: str, assets: Path, run_file: Path) -> list[str]:
         # The scope is never reached in these tests — the assets and truth gates
         # fire first — but typer still demands the argument.
         "ingest": ["a-scope"],
+        "run": ["recall", "a-scope"],
         "score": [str(run_file)],
         "report": [str(run_file), str(run_file)],
     }.get(verb, [])
@@ -189,24 +187,29 @@ class TestTruthGate:
         assert result.exit_code == 0  # got past the gate and scored
 
 
-class TestStubs:
-    @pytest.mark.parametrize("verb", STUB_NAMES)
-    def test_a_stub_exits_non_zero_and_says_what_it_will_do(
-        self, runner: CliRunner, make_assets: Callable[..., Path], verb: str
-    ) -> None:
-        """A stub that exited 0 would read as a passing benchmark in a script."""
-        result = runner.invoke(app, [verb, "--assets", str(make_assets())])
+class TestRun:
+    """The wiring only — what `run` measures is `test_execute.py`'s subject."""
 
-        assert result.exit_code == 1
-        assert "not implemented" in result.stderr
-        assert VERBS[verb] in result.stderr
-
-    @pytest.mark.parametrize("verb", STUB_NAMES)
-    def test_a_stub_reports_where_it_resolved_its_inputs(
-        self, runner: CliRunner, make_assets: Callable[..., Path], verb: str
+    def test_an_empty_corpus_names_the_verb_that_fills_it(
+        self, runner: CliRunner, make_assets: Callable[..., Path]
     ) -> None:
+        """A run over a corpus that holds nothing would emit a run file of
+        zeroes, which scores exactly like a pipeline that lost every record."""
         assets = make_assets()
 
-        result = runner.invoke(app, [verb, "--assets", str(assets)])
+        result = runner.invoke(
+            app, ["run", "recall", "placeholder-book", "--assets", str(assets)]
+        )
 
-        assert str(assets) in result.stdout
+        assert result.exit_code == 1
+        assert "ingest" in result.stderr
+
+    def test_an_unknown_family_names_the_families(
+        self, runner: CliRunner, make_assets: Callable[..., Path]
+    ) -> None:
+        result = runner.invoke(
+            app, ["run", "everything", "placeholder-book", "--assets", str(make_assets())]
+        )
+
+        assert result.exit_code == 1
+        assert "recall" in result.stderr

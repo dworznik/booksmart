@@ -20,15 +20,67 @@ One verb per artefact boundary:
 
 ```console
 $ booksmart-bench ingest <area|book> [--force]      # build a corpus
-$ booksmart-bench run <family> <area>               # emit a run file
+$ booksmart-bench run <family> <area|book>          # emit a run file
 $ booksmart-bench score <run-file> [--out s.json]   # run file x truth -> scores
 $ booksmart-bench report <base> <cand> [--out r.md] # two runs, side by side
 ```
 
-`ingest` is the only verb that spends money, and it is idempotent: a book whose
-bytes and configuration are unchanged is skipped. `score` and `report` are pure
-— no pipeline, no corpus, no network — and `report` exits non-zero on a
-regression so it can gate a change without anyone reading the table first.
+`ingest` is idempotent: a book whose bytes and configuration are unchanged is
+skipped. `score` and `report` are pure — no pipeline, no corpus, no network —
+and `report` exits non-zero on a regression so it can gate a change without
+anyone reading the table first.
+
+## Running a benchmark
+
+`run` takes a family and a scope, and writes one run file into `<assets>/runs/`
+(or wherever `--out` says):
+
+```console
+$ booksmart-bench run recall fp        # the query sets, through the real search path
+$ booksmart-bench run ingestion sicp   # structure, coverage, faithfulness, cost
+$ booksmart-bench run all fp           # both, into one file
+```
+
+A scope is a book slug or an area. An area also asks that area's cross-book
+queries, which go to the whole corpus — which book answers is half of what they
+measure — while a book's own set is filtered to that book, so whatever else the
+corpus happens to hold cannot move the score.
+
+Recall goes through `booksmart_core.search`, the same path a product consumer
+uses. The run writer owns the **record -> location join**: a hit's chapter,
+section or knowledge object is resolved to the ToC node id truth names, by
+normalised title with position as the tiebreak, so the scorer never sees a
+record id. A hit that joins to no node is dropped and counted — the surviving
+ranks stay the ranks search produced — and every drop lands in the run file's
+notes.
+
+`run` spends money only when the judge is configured (below); `--no-judge`
+turns that off.
+
+## The faithfulness judge
+
+Summary faithfulness has no ground truth to compare against — the summary is
+written per run — so the check is a second model reading each summary beside the
+exact source slice it should have come from. That makes the judge an
+instrument, and it is pinned like one:
+
+```console
+$ export BOOKSMART_BENCH_JUDGE_PROVIDER=gemini   # never the summariser's family
+$ export BOOKSMART_BENCH_JUDGE_MODEL=gemini-3.5-flash
+```
+
+Both are required. The judge must be **cross-family** — a model grading its own
+family's prose measures its own preferences, so a judge provider equal to
+`BOOKSMART_LLM_PROVIDER` is refused — and it must be **named**, because a
+provider default is whatever the vendor decided this month, which is the ruler
+moving between runs. Its identity, prompt version included, is stamped into
+every run file that used it, and its spend lands in the cost dimension like any
+other spend. Prompts live in `judge.py` and are versioned
+like the pipeline's extraction prompts: a score produced under one prompt is not
+comparable with a score produced under another.
+
+With no judge configured, faithfulness simply goes unmeasured and the run says
+so.
 
 ## What is measured
 

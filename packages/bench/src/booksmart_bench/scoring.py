@@ -117,6 +117,10 @@ class SummaryJudgement:
     loc: str
     supported: int
     claims: int
+    # Why this summary carries no ratio, when the judge left one. "Nothing to
+    # verify" and "the judge could not read its own answer" are different
+    # stories, and the run writer is the only one that knows which happened.
+    note: str = ""
 
     @property
     def ratio(self) -> float | None:
@@ -221,6 +225,7 @@ def _build_run(document: Mapping[str, Any]) -> RunFile:
                 loc=str(item.get("loc", "")),
                 supported=_int(item.get("supported"), "faithfulness.supported"),
                 claims=_int(item.get("claims"), "faithfulness.claims"),
+                note=str(item.get("note", "")),
             )
             for item in _mappings(document.get("faithfulness"))
         ),
@@ -642,11 +647,11 @@ def _match_nodes(expected: Sequence[Any], detected: Sequence[DetectedNode]) -> i
     """
     remaining: dict[tuple[str, str], list[Any]] = {}
     for node in expected:
-        remaining.setdefault((node.kind, _normalise(node.title)), []).append(node)
+        remaining.setdefault((node.kind, normalise_title(node.title)), []).append(node)
 
     matched = 0
     for node in sorted(detected, key=lambda n: n.position):
-        candidates = remaining.get((node.kind, _normalise(node.title)))
+        candidates = remaining.get((node.kind, normalise_title(node.title)))
         if candidates:
             candidates.pop(0)
             matched += 1
@@ -664,9 +669,14 @@ def _prf(matched: int, detected: int, expected: int) -> StructureScore:
     return StructureScore(precision=precision, recall=recall, f1=f1, expected=expected)
 
 
-def _normalise(title: str) -> str:
+def normalise_title(title: str) -> str:
     """Compare headings the way a reader would: ignore leading numbering, case,
-    punctuation and spacing."""
+    punctuation and spacing.
+
+    Public because the run writer's record->location join has to compare
+    headings *the same way* this does. Two normalisations that drifted apart
+    would put a hit on a node the scorer then judged against a different one.
+    """
     return _NON_WORD.sub(" ", _LEADING_NUMBER.sub("", title).lower()).strip()
 
 
@@ -683,11 +693,11 @@ def _score_coverage(run: RunFile, truth: Truth, skipped: list[str]) -> CoverageS
             skipped.append(f"coverage: run names book {entry.book!r}, absent from truth")
             continue
 
-        surfaced = {_normalise(name) for name in entry.surfaced}
+        surfaced = {normalise_title(name) for name in entry.surfaced}
         found = sum(
             1
             for concept in book.concepts
-            if surfaced & {_normalise(name) for name in (concept.concept, *concept.accept)}
+            if surfaced & {normalise_title(name) for name in (concept.concept, *concept.accept)}
         )
         found_total += found
         expected_total += len(book.concepts)
@@ -708,7 +718,8 @@ def _score_faithfulness(run: RunFile, skipped: list[str]) -> FaithfulnessScore |
         ratio = judgement.ratio
         if ratio is None:
             skipped.append(
-                f"faithfulness: {judgement.book}/{judgement.loc} had no claims to verify"
+                f"faithfulness: {judgement.book}/{judgement.loc} "
+                f"{judgement.note or 'had no claims to verify'}"
             )
             continue
         ratios.append(ratio)
