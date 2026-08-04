@@ -143,6 +143,62 @@ class TestSources:
         assert any(digest in note for note in outcome.notes)
 
 
+class TestProvenanceIsHandEditable:
+    """provenance.json is written to be read, which means it will be edited."""
+
+    def test_a_provenance_file_that_is_not_an_object_is_a_bench_error(
+        self, assets: Path
+    ) -> None:
+        from booksmart_bench.config import load_settings
+
+        ingest(assets)
+        with Corpus.open(load_settings()) as corpus:
+            (corpus.home / "provenance.json").write_text("[]")
+
+        with pytest.raises(BenchError, match="provenance"):
+            ingest(assets)
+
+
+class TestSourceContainment:
+    def test_a_source_outside_the_assets_checkout_is_refused(
+        self, write_truth: Callable[..., Path], make_pdf: Callable[..., Path], tmp_path: Path
+    ) -> None:
+        """book.yaml is hand-authored in another checkout; a `../` source would
+        otherwise be hashed and copied in from anywhere on disk."""
+        outside = make_pdf(tmp_path / "elsewhere" / "secret.pdf")
+        root = write_truth(
+            "a-book",
+            book={
+                "title": "A Book",
+                "area": "an-area",
+                "source": {"file": f"../{outside.parent.name}/{outside.name}", "sha256": "x"},
+            },
+        )
+
+        with pytest.raises(SourceMissingError, match="outside the assets checkout"):
+            ingest(root)
+
+
+class TestRunProvenance:
+    def test_the_run_row_records_the_versions_in_their_own_slots(
+        self, assets: Path
+    ) -> None:
+        """finalize_run assigns the stamps positionally, so a wrong order writes
+        the embedding model into the extraction-version column."""
+        from booksmart_bench.config import load_settings
+        from booksmart_core.models import Run
+        from booksmart_core.parsing import EXTRACTION_VERSION
+
+        ingest(assets)
+
+        with Corpus.open(load_settings()) as corpus, corpus.session_factory() as session:
+            run = session.scalars(select(Run)).first()
+        assert run is not None
+        assert run.extraction_version == EXTRACTION_VERSION
+        assert run.model_version is not None and "llm=" in run.model_version
+        assert run.prompt_version is not None and "extraction=" in run.prompt_version
+
+
 class TestIdempotency:
     def test_re_ingesting_an_unchanged_config_is_a_no_op(self, assets: Path) -> None:
         """Ingest once, recall often — re-running must not spend the afternoon

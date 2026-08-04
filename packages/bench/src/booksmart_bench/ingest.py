@@ -36,7 +36,9 @@ from booksmart_core.llm import (
     build_llm_provider,
 )
 from booksmart_core.models import Book
-from booksmart_core.parsing import ParserChain, build_default_chain
+from booksmart_core.extraction import EXTRACTION_PROMPT_VERSION
+from booksmart_core.parsing import EXTRACTION_VERSION, ParserChain, build_default_chain
+from booksmart_core.profile import PROFILE_PROMPT_VERSION
 from booksmart_core.runner import SCOPE_STAGES, finalize_run, start_run
 from booksmart_core.stages import (
     LLM_STAGES,
@@ -50,6 +52,7 @@ from booksmart_core.stages import (
     run_summaries,
 )
 from booksmart_core.storage import hash_stream
+from booksmart_core.summaries import SUMMARY_PROMPT_VERSION
 
 from booksmart_bench.corpus import Corpus
 from booksmart_bench.errors import BenchError, SourceMissingError
@@ -110,10 +113,14 @@ def read_provenance(home: Path) -> Provenance:
         document = json.loads(path.read_text())
     except json.JSONDecodeError as exc:
         raise BenchError(f"Could not parse {path}: {exc}") from exc
-    return Provenance(
-        snapshot=str(document.get("snapshot", "")),
-        books=dict(document.get("books", {})),
-    )
+    if not isinstance(document, dict):
+        raise BenchError(
+            f"{path} should contain an object, got {type(document).__name__}"
+        )
+    books = document.get("books", {})
+    if not isinstance(books, dict):
+        raise BenchError(f"{path}: 'books' should be an object, got {type(books).__name__}")
+    return Provenance(snapshot=str(document.get("snapshot", "")), books=dict(books))
 
 
 def write_provenance(home: Path, provenance: Provenance) -> None:
@@ -157,7 +164,16 @@ def locate_source(assets: Path, book: BookTruth) -> tuple[Path, str]:
     a pipeline regression that is really a library change.
     """
     relative = book.source_file or f"sources/{book.slug}.pdf"
-    path = assets / relative
+    root = assets.resolve()
+    path = (root / relative).resolve()
+    if not path.is_relative_to(root):
+        # book.yaml is hand-authored in a separate checkout; an absolute or
+        # ../-prefixed source would have this hash and store a file from
+        # outside the assets tree entirely.
+        raise SourceMissingError(
+            f"{book.slug}: source {relative!r} resolves outside the assets checkout "
+            f"({path}). Sources must live under {root}."
+        )
     if not path.is_file():
         raise SourceMissingError(
             f"{book.slug}: no source at {path}. Drop the file there (see the "
@@ -262,9 +278,11 @@ def run_pipeline(
             reports,
             status=status,
             stamps=(
-                corpus.settings.embedding_model or "",
+                EXTRACTION_VERSION,
                 f"llm={llm.model},embedding={embedder.model}",
-                None,
+                f"profile={PROFILE_PROMPT_VERSION},"
+                f"extraction={EXTRACTION_PROMPT_VERSION},"
+                f"summary={SUMMARY_PROMPT_VERSION}",
             ),
             error=error,
             count_tokens=any(stage in LLM_STAGES for stage in stages),

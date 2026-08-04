@@ -156,6 +156,15 @@ def load_run(path: Path) -> RunFile:
         raise BenchError(f"Could not parse {path}: {exc}") from exc
     if not isinstance(document, dict):
         raise BenchError(f"{path} should contain an object, got {type(document).__name__}")
+    try:
+        return _build_run(document)
+    except (TypeError, ValueError) as exc:
+        # Run files get hand-edited. A bad scalar should name the file on one
+        # line, like a bad brace does, not arrive as a traceback.
+        raise BenchError(f"Could not read {path}: {exc}") from exc
+
+
+def _build_run(document: Mapping[str, Any]) -> RunFile:
 
     corpus = _mapping(document.get("corpus"))
     search = _mapping(document.get("search"))
@@ -165,7 +174,7 @@ def load_run(path: Path) -> RunFile:
         books=tuple(str(book) for book in _sequence(corpus.get("books"))),
         search=SearchParams(
             mode=str(search.get("mode", "")),
-            limit=int(search.get("limit", 0) or 0),
+            limit=_int(search.get("limit"), "search.limit"),
             record_types=tuple(str(t) for t in _sequence(search.get("record_types"))),
         ),
         results=tuple(
@@ -175,7 +184,7 @@ def load_run(path: Path) -> RunFile:
                 area=_optional_str(item.get("area")),
                 hits=tuple(
                     Hit(
-                        rank=int(hit.get("rank", 0) or 0),
+                        rank=_int(hit.get("rank"), "hit.rank"),
                         book=str(hit.get("book", "")),
                         loc=str(hit.get("loc", "")),
                         record_type=str(hit.get("record_type", "")),
@@ -192,7 +201,7 @@ def load_run(path: Path) -> RunFile:
                     DetectedNode(
                         title=str(node.get("title", "")),
                         kind=str(node.get("kind", "")),
-                        position=int(node.get("position", 0) or 0),
+                        position=_int(node.get("position"), "detected.position"),
                     )
                     for node in _mappings(item.get("detected"))
                 ),
@@ -210,8 +219,8 @@ def load_run(path: Path) -> RunFile:
             SummaryJudgement(
                 book=str(item.get("book", "")),
                 loc=str(item.get("loc", "")),
-                supported=int(item.get("supported", 0) or 0),
-                claims=int(item.get("claims", 0) or 0),
+                supported=_int(item.get("supported"), "faithfulness.supported"),
+                claims=_int(item.get("claims"), "faithfulness.claims"),
             )
             for item in _mappings(document.get("faithfulness"))
         ),
@@ -223,10 +232,10 @@ def _load_cost(raw: object) -> Cost | None:
     if not isinstance(raw, dict):
         return None
     return Cost(
-        input_tokens=int(raw.get("input_tokens", 0) or 0),
-        output_tokens=int(raw.get("output_tokens", 0) or 0),
-        embedding_tokens=int(raw.get("embedding_tokens", 0) or 0),
-        wall_seconds=float(raw.get("wall_seconds", 0.0) or 0.0),
+        input_tokens=_int(raw.get("input_tokens"), "cost.input_tokens"),
+        output_tokens=_int(raw.get("output_tokens"), "cost.output_tokens"),
+        embedding_tokens=_int(raw.get("embedding_tokens"), "cost.embedding_tokens"),
+        wall_seconds=_float(raw.get("wall_seconds"), "cost.wall_seconds"),
         per_stage=tuple(_mappings(raw.get("per_stage"))),
     )
 
@@ -522,7 +531,11 @@ def _judge(
 
     best_rank: int | None = None
     best_book_rank: int | None = None
-    for hit in sorted(result.hits, key=lambda h: h.rank):
+    # Ranks are 1-based; a missing or non-positive one is malformed, and both
+    # metrics have to agree about that rather than one counting it as a hit and
+    # the other as a miss.
+    ranked = sorted((hit for hit in result.hits if hit.rank >= 1), key=lambda h: h.rank)
+    for hit in ranked:
         if (hit.book, hit.loc) in wanted and best_rank is None:
             best_rank = hit.rank
         if hit.book in wanted_books and best_book_rank is None:
@@ -767,6 +780,22 @@ def _mean(values: Iterable[float]) -> float:
     if not collected:
         return 0.0
     return math.fsum(collected) / len(collected)
+
+
+def _int(raw: object, where: str) -> int:
+    if raw is None or raw == "":
+        return 0
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        raise TypeError(f"{where} should be a number, got {type(raw).__name__}")
+    return int(raw)
+
+
+def _float(raw: object, where: str) -> float:
+    if raw is None or raw == "":
+        return 0.0
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        raise TypeError(f"{where} should be a number, got {type(raw).__name__}")
+    return float(raw)
 
 
 def _mapping(raw: object) -> Mapping[str, Any]:

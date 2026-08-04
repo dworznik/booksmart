@@ -255,7 +255,9 @@ def report(
         out.write_text(markdown)
         console.print(f"wrote [cyan]{escape(str(out))}[/cyan]")
     else:
-        console.print(escape(markdown), markup=False, highlight=False)
+        # markup=False already stops Rich reading brackets as tags; escaping as
+        # well would print the backslashes and disagree with what --out writes.
+        console.print(markdown, markup=False, highlight=False)
 
     if verdict.is_regression:
         raise BenchError(

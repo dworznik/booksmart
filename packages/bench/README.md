@@ -22,7 +22,7 @@ One verb per artefact boundary:
 $ booksmart-bench ingest <area|book> [--force]      # build a corpus
 $ booksmart-bench run <family> <area>               # emit a run file
 $ booksmart-bench score <run-file> [--out s.json]   # run file x truth -> scores
-$ booksmart-bench report <baseline> <candidate>     # two runs, side by side
+$ booksmart-bench report <base> <cand> [--out r.md] # two runs, side by side
 ```
 
 `ingest` is the only verb that spends money, and it is idempotent: a book whose

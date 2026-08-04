@@ -6,6 +6,7 @@ scorer that could not be trusted to compare two of them.
 """
 
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -43,14 +44,14 @@ class TestLoad:
         assert (run.run_id, run.snapshot, run.books) == ("r1", "snap", ("a",))
 
     def test_a_missing_file_is_an_error(self, tmp_path: Path) -> None:
-        with pytest.raises(BenchError, match="nowhere.json"):
+        with pytest.raises(BenchError, match=re.escape("nowhere.json")):
             load_run(tmp_path / "nowhere.json")
 
     def test_malformed_json_names_the_file(self, tmp_path: Path) -> None:
         path = tmp_path / "bad.json"
         path.write_text("{not json")
 
-        with pytest.raises(BenchError, match="bad.json"):
+        with pytest.raises(BenchError, match=re.escape("bad.json")):
             load_run(path)
 
     def test_reads_the_documented_shape(self, tmp_path: Path) -> None:
@@ -87,6 +88,81 @@ class TestLoad:
         assert run.search.mode == "hybrid"
         assert run.results[0].hits[0].loc == "4.1"
         assert run.results[0].hits[1].record_type == "chapter"
+
+
+class TestMalformedRunFiles:
+    def test_a_non_numeric_rank_is_a_bench_error_not_a_traceback(
+        self, tmp_path: Path
+    ) -> None:
+        """The CLI renders BenchError as one line; anything else is a traceback
+        in the face of someone whose only mistake was a hand-edited run file."""
+        path = tmp_path / "bad.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "run_id": "r",
+                    "corpus": {"snapshot": "s", "books": []},
+                    "search": {},
+                    "results": [{"q": "a", "hits": [{"book": "b", "loc": "1", "rank": "one"}]}],
+                }
+            )
+        )
+
+        with pytest.raises(BenchError, match=re.escape("bad.json")):
+            load_run(path)
+
+    def test_a_non_numeric_claim_count_is_a_bench_error(self, tmp_path: Path) -> None:
+        path = tmp_path / "bad.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "run_id": "r",
+                    "corpus": {"snapshot": "s", "books": []},
+                    "search": {},
+                    "faithfulness": [{"book": "b", "loc": "1", "supported": 1, "claims": {}}],
+                }
+            )
+        )
+
+        with pytest.raises(BenchError, match=re.escape("bad.json")):
+            load_run(path)
+
+
+class TestRanks:
+    """A rank is 1-based. Anything else is malformed, and the two metrics must
+    at least agree about it."""
+
+    @pytest.mark.parametrize("rank", [0, -1])
+    def test_a_non_positive_rank_counts_as_a_miss_for_both_metrics(
+        self,
+        write_truth: Callable[..., Path],
+        write_run: Callable[..., Path],
+        rank: int,
+    ) -> None:
+        assets = write_truth(
+            "placeholder-book",
+            queries=[
+                {"q": "grommets", "kind": "exact-term", "expects": [{"loc": "1.2"}], "why": "W."}
+            ],
+        )
+        run = load_run(
+            write_run(
+                results=[
+                    {
+                        "q": "grommets",
+                        "hits": [
+                            {"rank": rank, "book": "placeholder-book", "loc": "1.2"}
+                        ],
+                    }
+                ]
+            )
+        )
+
+        result = score(run, load_truth(assets))
+
+        assert result.recall is not None
+        assert result.recall.mrr == 0.0
+        assert result.recall.hit_at_5 == 0.0
 
 
 class TestRecall:
@@ -583,16 +659,19 @@ class TestFaithfulness:
         assert result.faithfulness is not None
         assert [entry.loc for entry in result.faithfulness.below_bar] == ["1.2"]
 
-    def test_a_summary_with_no_claims_does_not_divide_by_zero(
+    def test_a_summary_with_no_claims_is_skipped_not_scored_as_zero(
         self, write_truth: Callable[..., Path], write_run: Callable[..., Path]
     ) -> None:
+        """Nothing to verify is not the same as nothing supported; averaging it
+        in as 0.0 would report a faithfulness collapse."""
         result = scored(
             write_truth,
             write_run,
             faithfulness=[{"book": "placeholder-book", "loc": "1.1", "supported": 0, "claims": 0}],
         )
 
-        assert result.faithfulness is None or result.faithfulness.mean is not None
+        assert result.faithfulness is None
+        assert any("no claims" in note for note in result.skipped)
 
 
 class TestCost:
