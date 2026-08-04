@@ -119,12 +119,19 @@ def execute_run(
     judge_llm: LLMProvider | None = None,
     on_progress: Callable[[str], None] | None = None,
 ) -> RunOutcome:
-    """Execute one family of benchmarks over one scope and write the run file."""
+    """Execute one family of benchmarks over one scope and write the run file.
+
+    ``judge_llm`` is a test seam: it takes the judge's provider ready-built, so
+    a suite can drive the sweep without a key. It bypasses ``build_judge`` and
+    therefore the cross-family check, and the run file still stamps ``judge`` —
+    nothing but a test should reach for it.
+    """
     if family not in FAMILIES:
         raise BenchError(
             f"Unknown family {family!r}; expected one of {', '.join(sorted(FAMILIES))}."
         )
     books, area = _resolve_scope(truth, scope)
+    run_id, path = _destination(assets, family, scope, out)
     notes: list[str] = []
     if family in RECALL_FAMILIES and area is None and scope not in truth.books:
         notes.append(
@@ -138,7 +145,7 @@ def execute_run(
 
     with Corpus.open(settings) as corpus:
         provenance = read_provenance(corpus.home)
-        known = _in_corpus(truth, provenance)
+        known = _in_corpus(truth, provenance, notes)
         scoped = tuple(book for book in books if book.slug in known)
         notes.extend(
             f"{book.slug}: not in this corpus; `booksmart-bench ingest {book.slug}` first"
@@ -205,7 +212,6 @@ def execute_run(
                     report=report,
                 )
 
-        run_id = _run_id(family, scope)
         document = {
             "run_id": run_id,
             "generated_at": datetime.now(UTC).isoformat(),
@@ -239,12 +245,10 @@ def execute_run(
                 }
                 for verdict in (judged.verdicts if judged is not None else ())
             ],
-            "cost": _cost(family, provenance, scoped, search_cost, judged),
+            "cost": _cost(family, provenance, scoped, search_cost, judged, notes),
             "notes": notes,
         }
 
-    path = out if out is not None else assets / "runs" / f"{run_id}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(document, indent=2) + "\n")
 
     return RunOutcome(
@@ -270,7 +274,9 @@ def _resolve_scope(truth: Truth, scope: str) -> tuple[tuple[BookTruth, ...], str
     return books, area
 
 
-def _in_corpus(truth: Truth, provenance: Provenance) -> dict[str, uuid.UUID]:
+def _in_corpus(
+    truth: Truth, provenance: Provenance, notes: list[str]
+) -> dict[str, uuid.UUID]:
     """Every book truth knows that this corpus actually holds."""
     found: dict[str, uuid.UUID] = {}
     for slug, record in provenance.books.items():
@@ -281,7 +287,13 @@ def _in_corpus(truth: Truth, provenance: Provenance) -> dict[str, uuid.UUID]:
             found[slug] = uuid.UUID(str(book_id))
         except ValueError:
             # provenance.json is written to be read, so it gets hand-edited.
-            continue
+            # Named rather than skipped: the book *was* ingested, and the
+            # "run ingest first" remedy every other absence gets would send the
+            # operator to re-spend an afternoon on a one-line typo.
+            notes.append(
+                f"{slug}: provenance.json records an unreadable book_id ({book_id!r}); "
+                "the book was left out of this run"
+            )
     return found
 
 
@@ -444,11 +456,7 @@ class _Asking:
     cost: _SearchCost
     notes: list[str]
     report: Callable[[str], None]
-    # Hits dropped because their record joined to no node, by book.
-    unjoined: Counter[str] = field(default_factory=Counter)
-    # Hits dropped because they came from a book this truth tree has never
-    # heard of — a different miss, and one the operator fixes differently.
-    unknown_book: int = 0
+    drops: "_Drops" = field(default_factory=lambda: _Drops())
 
     def ask(self, query: Query, *, book_id: uuid.UUID | None) -> dict[str, Any] | None:
         if query.gated:
@@ -469,32 +477,31 @@ class _Asking:
             limit=self.limit,
         )
         self.cost.add(found, time.monotonic() - started)
-        return {"q": query.q, "hits": self.locate(found)}
-
-    def locate(self, found: SearchResults) -> list[dict[str, Any]]:
-        """Hits as locations, in the order search ranked them.
-
-        A hit whose record joins to no node is left out rather than renumbered
-        around: the ranks that remain are the ranks the pipeline produced, so
-        dropping one cannot promote another. Every drop is counted — an
-        invisible one would read downstream as a retrieval miss.
-        """
-        located: list[dict[str, Any]] = []
-        for rank, hit in enumerate(found.hits, start=1):
-            slug = self.by_book.get(hit.book_id)
-            if slug is None:
-                self.unknown_book += 1
-                continue
-            node = _node_for(hit, self.maps[slug])
-            if node is None:
-                self.unjoined[slug] += 1
-                continue
-            located.append(
-                {"rank": rank, "book": slug, "loc": node, "record_type": hit.record_type}
-            )
-        return located
+        return {"q": query.q, "hits": locate(found, self.maps, self.by_book, self.drops)}
 
     def notes_about_drops(self) -> list[str]:
+        notes = self.drops.notes()
+        if self.cost.unreported:
+            notes.append(
+                f"{self.cost.unreported} search call(s) reported no embedding usage; "
+                "the search cost recorded below is a lower bound"
+            )
+        return notes
+
+
+@dataclass
+class _Drops:
+    """Hits a run could not place, tallied for the notes.
+
+    Two tallies, not one: a record that joined to no node is a truth-or-parser
+    problem in a book the harness knows, while a hit from a book truth has never
+    heard of is a corpus problem. The operator fixes them differently.
+    """
+
+    unjoined: Counter[str] = field(default_factory=Counter)
+    unknown_book: int = 0
+
+    def notes(self) -> list[str]:
         notes = [
             f"{slug}: {count} hit(s) dropped — their record joined to no ToC node"
             for slug, count in sorted(self.unjoined.items())
@@ -504,12 +511,37 @@ class _Asking:
                 f"{self.unknown_book} hit(s) dropped — they came from a book this "
                 "truth tree does not cover"
             )
-        if self.cost.unreported:
-            notes.append(
-                f"{self.cost.unreported} search call(s) reported no embedding usage; "
-                "the search cost recorded below is a lower bound"
-            )
         return notes
+
+
+def locate(
+    found: SearchResults,
+    maps: Mapping[str, _Joined],
+    by_book: Mapping[uuid.UUID, str],
+    drops: _Drops,
+) -> list[dict[str, Any]]:
+    """Hits as locations, in the order search ranked them.
+
+    A hit whose record joins to no node is left out rather than renumbered
+    around: the ranks that remain are the ranks the pipeline produced, so
+    dropping one cannot promote another — the surviving list carries a gap where
+    the drop was. Every drop is counted; an invisible one would read downstream
+    as a retrieval miss.
+    """
+    located: list[dict[str, Any]] = []
+    for rank, hit in enumerate(found.hits, start=1):
+        slug = by_book.get(hit.book_id)
+        if slug is None:
+            drops.unknown_book += 1
+            continue
+        node = _node_for(hit, maps[slug])
+        if node is None:
+            drops.unjoined[slug] += 1
+            continue
+        located.append(
+            {"rank": rank, "book": slug, "loc": node, "record_type": hit.record_type}
+        )
+    return located
 
 
 def _node_for(hit: SearchHit, joined: _Joined) -> str | None:
@@ -630,13 +662,22 @@ def _summaries_under_test(
     )
 
     under_test: list[SummaryUnderTest] = []
+    unjoined = 0
     for chapter, body in iter_chapter_bodies(chapters, markdown):
         node = joined.node_for(str(chapter.id))
         if chapter.summary and node:
             under_test.append(SummaryUnderTest(slug, node, chapter.summary, body))
+        elif chapter.summary:
+            unjoined += 1
         for section in chapter.sections:
             node = joined.node_for(str(section.id))
-            if not (section.summary and node):
+            if not section.summary:
+                continue
+            if not node:
+                # A summary with no location cannot be reported against one.
+                # Counted, because an unjudged summary is invisible in a
+                # dimension whose score is a mean over the summaries judged.
+                unjoined += 1
                 continue
             if section.source_line is None:
                 notes.append(
@@ -656,6 +697,11 @@ def _summaries_under_test(
                     ),
                 )
             )
+    if unjoined:
+        notes.append(
+            f"{slug}: {unjoined} summar{'y' if unjoined == 1 else 'ies'} not judged — "
+            "their record joined to no ToC node"
+        )
     return under_test
 
 
@@ -673,6 +719,7 @@ def _cost(
     scoped: Sequence[BookTruth],
     search_cost: _SearchCost,
     judged: JudgeReport | None,
+    notes: list[str],
 ) -> dict[str, Any]:
     """Everything this measurement cost, per Stage.
 
@@ -683,7 +730,7 @@ def _cost(
     """
     per_stage: list[dict[str, Any]] = []
     if family in INGESTION_FAMILIES:
-        per_stage.extend(_ingest_stages(provenance, scoped))
+        per_stage.extend(_ingest_stages(provenance, scoped, notes))
     if family in RECALL_FAMILIES:
         per_stage.append(
             {
@@ -715,7 +762,7 @@ def _cost(
 
 
 def _ingest_stages(
-    provenance: Provenance, scoped: Sequence[BookTruth]
+    provenance: Provenance, scoped: Sequence[BookTruth], notes: list[str]
 ) -> list[dict[str, Any]]:
     """One row per Stage, summed over the books in scope.
 
@@ -730,28 +777,68 @@ def _ingest_stages(
         for entry in provenance.books.get(book.slug, {}).get("stages", []):
             if not isinstance(entry, dict):
                 continue
+            stage = str(entry.get("stage", "")).strip()
+            if not stage:
+                notes.append(f"{book.slug}: a provenance stage entry has no name; its cost is not counted")
+                continue
             row = totals.setdefault(
-                str(entry.get("stage", "")),
+                stage,
                 {
-                    "stage": str(entry.get("stage", "")),
+                    "stage": stage,
                     "seconds": 0.0,
                     "input_tokens": 0,
                     "output_tokens": 0,
                     "embedding_tokens": 0,
                 },
             )
-            row["seconds"] += float(entry.get("seconds", 0.0) or 0.0)
+            row["seconds"] += _number(entry.get("seconds"), float, f"{book.slug}/{stage} seconds", notes)
             for measure in ("input_tokens", "output_tokens", "embedding_tokens"):
-                row[measure] += int(entry.get(measure, 0) or 0)
+                row[measure] += _number(entry.get(measure), int, f"{book.slug}/{stage} {measure}", notes)
     return list(totals.values())
+
+
+def _number(value: Any, cast: Callable[[Any], Any], where: str, notes: list[str]) -> Any:
+    """One provenance figure, or a noted zero.
+
+    provenance.json is written to be read and therefore gets hand-edited. Cost
+    is tracked and never scored, so a typo in it must not end a measurement that
+    is otherwise complete — but a figure quietly read as zero would understate a
+    run's spend, so the substitution is reported.
+    """
+    if value is None or value == "":
+        return cast(0)
+    try:
+        return cast(value)
+    except (TypeError, ValueError):
+        notes.append(f"{where} is not a number ({value!r}); counted as zero")
+        return cast(0)
 
 
 def _total(per_stage: Sequence[Mapping[str, Any]], measure: str) -> int:
     return sum(int(entry.get(measure, 0) or 0) for entry in per_stage)
 
 
-def _run_id(family: str, scope: str) -> str:
-    """Sortable, and it says what it is: nobody should have to open two run
-    files to find out which is which."""
-    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
-    return f"{stamp}-{family}-{scope}"
+def _destination(assets: Path, family: str, scope: str, out: Path | None) -> tuple[str, Path]:
+    """The run's id and where it will be written, resolved before any work.
+
+    The id is sortable and says what it is — nobody should have to open two run
+    files to find out which is which — but it is stamped to the second, and two
+    runs of one family and scope can finish inside one. So the default
+    destination is disambiguated rather than overwritten: a benchmark harness
+    that silently replaced a previous measurement would be the wrong tool
+    entirely. An explicit --out is honoured as given; that path was chosen.
+    """
+    stem = f"{datetime.now(UTC).strftime('%Y-%m-%dT%H-%M-%SZ')}-{family}-{scope}"
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        return stem, out
+
+    directory = assets / "runs"
+    directory.mkdir(parents=True, exist_ok=True)
+    run_id, candidate = stem, directory / f"{stem}.json"
+    attempt = 1
+    while candidate.exists():
+        attempt += 1
+        run_id = f"{stem}-{attempt}"
+        candidate = directory / f"{run_id}.json"
+    return run_id, candidate

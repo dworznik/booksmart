@@ -146,12 +146,7 @@ def resolve_judge(settings: Settings) -> JudgeConfig | None:
             f"Unknown judge provider {provider!r} in {JUDGE_PROVIDER_ENV}; "
             f"expected one of {', '.join(sorted(DEFAULT_MODELS))}."
         )
-    if provider == settings.llm_provider:
-        raise BenchError(
-            f"The judge and the summariser under test are both {provider!r}. The judge must "
-            "be cross-family (SPEC §5) — a model grading its own family's summaries measures "
-            f"its own preferences. Set {JUDGE_PROVIDER_ENV} to a different provider."
-        )
+    _refuse_same_family(provider, settings, remedy=f"Set {JUDGE_PROVIDER_ENV} to another provider.")
 
     model = os.environ.get(JUDGE_MODEL_ENV, "").strip()
     if not model:
@@ -166,10 +161,27 @@ def resolve_judge(settings: Settings) -> JudgeConfig | None:
     return JudgeConfig(provider=provider, model=model)
 
 
+def _refuse_same_family(provider: str, settings: Settings, *, remedy: str) -> None:
+    """The cross-family rule, enforced at both doors.
+
+    Checked again here rather than only where the environment is read, because
+    ``JudgeConfig`` is a plain value a caller can build by hand: a rule that only
+    guards one construction path is a rule with a way around it.
+    """
+    if provider != settings.llm_provider:
+        return
+    raise BenchError(
+        f"The judge and the summariser under test are both {provider!r}. The judge must "
+        "be cross-family (SPEC §5) — a model grading its own family's summaries measures "
+        f"its own preferences. {remedy}"
+    )
+
+
 def build_judge(config: JudgeConfig, settings: Settings) -> LLMProvider:
     """The judge's provider, built from the pipeline's keys but none of its
     Preferences — including reasoning effort, which belongs to the summariser's
     model and may not even be valid for the judge's."""
+    _refuse_same_family(config.provider, settings, remedy="Judge with another provider.")
     return build_llm_provider(
         settings.model_copy(
             update={
@@ -212,18 +224,21 @@ def parse_claims(text: str) -> tuple[str, ...]:
     Both shapes a model drifts between over a long sweep are accepted — bare
     strings and ``{"claim": ...}`` objects — because the alternative is losing a
     whole book's faithfulness to a formatting preference.
+
+    An element in neither shape raises rather than being skipped. Faithfulness
+    is supported/total, so a silently dropped claim moves the denominator: the
+    summary would score against a claim set nobody chose. Raising costs a retry,
+    and at worst one named, unscored summary.
     """
     payload = _load(text, "claim list")
     if not isinstance(payload, list):
         raise JudgeError("judge returned no claim array")
     claims: list[str] = []
-    for element in payload:
-        if isinstance(element, str) and element.strip():
-            claims.append(element.strip())
-        elif isinstance(element, dict):
-            claim = element.get("claim")
-            if isinstance(claim, str) and claim.strip():
-                claims.append(claim.strip())
+    for position, element in enumerate(payload):
+        claim = element.get("claim") if isinstance(element, dict) else element
+        if not isinstance(claim, str) or not claim.strip():
+            raise JudgeError(f"claim {position} is not a non-empty string")
+        claims.append(claim.strip())
     return tuple(claims)
 
 

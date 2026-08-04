@@ -13,7 +13,9 @@ from booksmart_bench.judge import (
     JUDGE_MODEL_ENV,
     JUDGE_PROMPT_VERSION,
     JUDGE_PROVIDER_ENV,
+    JudgeConfig,
     SummaryUnderTest,
+    build_judge,
     judge_summaries,
     parse_claims,
     parse_verdict,
@@ -67,6 +69,17 @@ class TestClaimParsing:
     def test_prose_is_a_judge_error(self) -> None:
         with pytest.raises(BenchError):
             parse_claims("Sure! Here are the claims:")
+
+    def test_an_element_in_neither_shape_is_a_judge_error(self) -> None:
+        """Skipping it would shrink the denominator: faithfulness is
+        supported/total, so a summary would be scored against a claim set
+        nobody chose."""
+        with pytest.raises(BenchError, match="claim 1"):
+            parse_claims('["one", {"text": "two"}]')
+
+    def test_a_blank_claim_is_a_judge_error(self) -> None:
+        with pytest.raises(BenchError):
+            parse_claims('["one", "   "]')
 
 
 class TestVerdictParsing:
@@ -162,6 +175,15 @@ class TestPinning:
 
         with pytest.raises(BenchError, match="cross-family"):
             resolve_judge(Settings(llm_provider="openai"))
+
+    def test_a_hand_built_config_is_checked_too(self) -> None:
+        """`JudgeConfig` is a plain value a caller can build; a rule that only
+        guarded the environment would be a rule with a way around it."""
+        with pytest.raises(BenchError, match="cross-family"):
+            build_judge(
+                JudgeConfig(provider="openai", model="a-model"),
+                Settings(llm_provider="openai"),
+            )
 
     def test_no_judge_configured_is_not_an_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Faithfulness is one dimension of five; an unconfigured judge means

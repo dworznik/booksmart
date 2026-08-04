@@ -10,19 +10,31 @@ that what a run cannot measure it names — never about a score being good.
 """
 
 import json
+import re
+import uuid
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from booksmart_bench.config import load_settings
 from booksmart_bench.errors import BenchError
-from booksmart_bench.execute import RunOutcome, execute_run
+from booksmart_bench.execute import (
+    RunOutcome,
+    _Drops,
+    _Joined,
+    execute_run,
+    locate,
+)
 from booksmart_bench.ingest import ingest_scope
 from booksmart_bench.judge import JudgeConfig
+from booksmart_bench.locations import Detected, LocationMap
 from booksmart_bench.scoring import load_run
 from booksmart_bench.scoring import score as score_run
 from booksmart_bench.truth import load_truth
+from booksmart_core.models import Chapter
+from booksmart_core.search import SearchHit, SearchResults
 
 from .conftest import StubLLM  # type: ignore[import-not-found]
 
@@ -78,8 +90,8 @@ def corpus_assets(
     return root
 
 
-def run(assets: Path, family: str = "all", scope: str = "a-book", **kwargs: object) -> RunOutcome:
-    return execute_run(assets, load_truth(assets), family, scope, load_settings(), **kwargs)  # type: ignore[arg-type]
+def run(assets: Path, family: str = "all", scope: str = "a-book", **kwargs: Any) -> RunOutcome:
+    return execute_run(assets, load_truth(assets), family, scope, load_settings(), **kwargs)
 
 
 def document(outcome: RunOutcome) -> dict[str, object]:
@@ -150,10 +162,7 @@ class TestRecall:
         assert {hit["loc"] for hit in located} <= {"1", "1.1", "1.2", "2"}
         assert all(hit["book"] == "a-book" for hit in located)
 
-    def test_ranks_survive_a_dropped_hit(self, corpus_assets: Path) -> None:
-        """A hit whose location does not resolve is left out, but the ranks of
-        the ones that do are the ranks search gave them — renumbering would
-        promote a hit the pipeline did not."""
+    def test_ranks_are_the_ranks_search_gave(self, corpus_assets: Path) -> None:
         results = document(run(corpus_assets, "recall"))["results"]
 
         assert isinstance(results, list)
@@ -244,8 +253,11 @@ class TestIngestionFamily:
 
         assert isinstance(coverage, list)
         assert coverage[0]["book"] == "a-book"
-        # The fake extractor surfaces one knowledge object per chapter.
+        # The fake extractor surfaces one knowledge object per chapter — and
+        # nothing at all for the second authored concept, which is the half of
+        # the coverage dimension that can actually fall.
         assert "Fake determinism" in coverage[0]["surfaced"]
+        assert "Something never extracted" not in coverage[0]["surfaced"]
 
     def test_the_ingestion_families_cost_comes_from_the_corpus_provenance(
         self, corpus_assets: Path
@@ -337,10 +349,29 @@ class TestNothingSilentlyUnasked:
 
         assert any("no queries authored" in note for note in outcome.notes)
 
-    def test_an_area_with_no_cross_book_set_says_so(self, corpus_assets: Path) -> None:
+    def test_an_area_with_no_query_file_says_so(self, corpus_assets: Path) -> None:
+        """The books all name this area, but nobody authored its cross-book
+        set — so the area slice is missing, not empty."""
         outcome = run(corpus_assets, "recall", "an-area")
 
-        assert any("cross-book" in note for note in outcome.notes)
+        assert any("no cross-book queries were asked" in note for note in outcome.notes)
+
+    def test_an_area_whose_query_file_is_empty_says_so(
+        self, write_truth: Callable[..., Path], place_source: Callable[..., str]
+    ) -> None:
+        root = write_truth(
+            "a-book",
+            book={"title": "A Book", "area": "an-area"},
+            toc=TOC,
+            area="an-area",
+            area_queries=[],
+        )
+        place_source(root, "a-book")
+        ingest_scope(root, load_truth(root), "a-book", load_settings())
+
+        outcome = run(root, "recall", "an-area")
+
+        assert any("no cross-book queries authored" in note for note in outcome.notes)
 
 
 class TestWhatItRefuses:
@@ -357,6 +388,65 @@ class TestWhatItRefuses:
 
         with pytest.raises(BenchError, match="ingest"):
             run(root)
+
+
+class TestTheJoin:
+    """The contract the whole artefact split rests on, exercised directly: the
+    fixture corpus resolves every hit, so a corpus-level test could not fail for
+    the reason a dropped hit exists."""
+
+    def test_a_dropped_hit_leaves_the_surviving_ranks_alone(self) -> None:
+        """Renumbering around a drop would promote a hit the pipeline did not —
+        and MRR is exactly the rank of the first right answer."""
+        book_id = uuid.uuid4()
+        maps = {
+            "a-book": _Joined(
+                book_id=book_id,
+                nodes=(),
+                locations=LocationMap(by_record={"r1": "1.1", "r3": "1.2"}),
+            )
+        }
+
+        located = locate(
+            SearchResults(
+                hits=[_hit("r1", book_id), _hit("r2", book_id), _hit("r3", book_id)],
+                embedding_tokens=0,
+            ),
+            maps,
+            {book_id: "a-book"},
+            _Drops(),
+        )
+
+        assert [hit["rank"] for hit in located] == [1, 3]
+        assert [hit["loc"] for hit in located] == ["1.1", "1.2"]
+
+    def test_every_drop_is_counted(self) -> None:
+        book_id, elsewhere = uuid.uuid4(), uuid.uuid4()
+        maps = {"a-book": _Joined(book_id=book_id, nodes=(), locations=LocationMap())}
+        drops = _Drops()
+
+        locate(
+            SearchResults(hits=[_hit("r1", book_id), _hit("r2", elsewhere)], embedding_tokens=0),
+            maps,
+            {book_id: "a-book"},
+            drops,
+        )
+
+        assert drops.unjoined["a-book"] == 1
+        assert drops.unknown_book == 1
+        assert len(drops.notes()) == 2
+
+
+def _hit(record_id: str, book_id: uuid.UUID) -> SearchHit:
+    """A search hit over a chapter row, with only what the join reads."""
+    return SearchHit(
+        score=1.0,
+        record_type="chapter",
+        record_id=record_id,  # type: ignore[arg-type]
+        book_id=book_id,
+        text="",
+        row=Chapter(title="A Chapter"),
+    )
 
 
 class TestRoundTrip:
@@ -381,6 +471,19 @@ class TestRoundTrip:
 
         assert scores.faithfulness is not None
         assert scores.faithfulness.mean == 1.0
+
+    def test_no_record_id_reaches_the_run_file(self, corpus_assets: Path) -> None:
+        """The invariant the artefact split rests on. Checked over the whole
+        measured document rather than the hits alone, so a dimension added later
+        cannot leak one quietly."""
+        measured = document(run(corpus_assets))
+        payload = json.dumps(
+            {key: measured[key] for key in ("results", "structure", "coverage", "faithfulness")}
+        )
+
+        assert not re.search(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", payload
+        )
 
     def test_a_summary_the_judge_could_not_read_is_reported_by_the_scorer(
         self, corpus_assets: Path
