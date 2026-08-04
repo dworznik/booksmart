@@ -8,6 +8,7 @@ Shared helpers are fixtures rather than module imports so this suite stays a
 plain directory (no ``__init__.py``) alongside the core and CLI suites.
 """
 
+import json
 import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -115,6 +116,41 @@ _DEFAULT_TOC: dict[str, object] = {
 
 def _dump(path: Path, payload: object) -> None:
     path.write_text(yaml.safe_dump(payload, sort_keys=False))
+
+
+@pytest.fixture()
+def write_run(tmp_path: Path) -> Callable[..., Path]:
+    """Factory: a run file on disk, defaulting to the smallest valid one."""
+
+    def _write(
+        name: str = "run.json",
+        *,
+        run_id: str = "2026-01-01T00-00-00Z-recall",
+        snapshot: str = "fake-fake-00000000",
+        books: list[str] | None = None,
+        results: list[dict[str, object]] | None = None,
+        **sections: object,
+    ) -> Path:
+        payload: dict[str, object] = {
+            "run_id": run_id,
+            "corpus": {"snapshot": snapshot, "books": books or ["placeholder-book"]},
+            "search": {"mode": "hybrid", "limit": 10},
+            "results": results if results is not None else [],
+        }
+        payload.update(sections)
+        path = tmp_path / name
+        path.write_text(json.dumps(payload, indent=2))
+        return path
+
+    return _write
+
+
+def hits(*locs: str, book: str = "placeholder-book") -> list[dict[str, object]]:
+    """Ranked hits from a bare list of locations, rank 1 first."""
+    return [
+        {"rank": rank, "book": book, "loc": loc, "record_type": "section"}
+        for rank, loc in enumerate(locs, start=1)
+    ]
 
 
 @pytest.fixture()
