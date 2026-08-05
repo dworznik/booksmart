@@ -68,9 +68,13 @@ flow mappings, and in a flow mapping a comma separates entries:
 
 That records a title of `"The call"`. Since structure fidelity matches nodes on
 normalised title, the node then cannot match the section it describes, and it
-scores as a detection failure rather than a quoting mistake. Any key outside
-`id`, `title` and `sections` is therefore an error naming the keys and the title
-as recorded. Quote titles containing `,` `?` `(` `)` `!` `#` `[` `]` `{` `}`.
+scores as a detection failure rather than a quoting mistake.
+
+So an entry saying anything the schema cannot read is an error, naming the keys
+and the title as recorded. A chapter may carry `id`, `title` and `sections`;
+front-matter, section and back-matter entries may carry only `id` and `title`,
+because this schema has two levels and a third authored here would be read by
+nobody. Quote titles containing `,` `?` `(` `)` `!` `#` `[` `]` `{` `}`.
 
 ## Assets and corpora
 
