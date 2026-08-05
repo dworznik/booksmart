@@ -50,6 +50,15 @@ from booksmart_core.parsing import ParserChain, build_default_chain
 _LETTER_SPACED = re.compile(r"(?:[A-Za-z] ){4,}[A-Za-z]")
 
 
+def _quiet_mupdf() -> None:
+    """MuPDF narrates recoverable defects — a missing stylesheet in an EPUB is
+    reported once per chapter and then ignored, which reads as a hang when it
+    scrolls past a silent twenty-minute marker run. The defects are recoverable,
+    so the narration is noise; anything genuinely fatal still raises."""
+    pymupdf.TOOLS.mupdf_display_errors(False)  # type: ignore[no-untyped-call]
+    pymupdf.TOOLS.mupdf_display_warnings(False)  # type: ignore[no-untyped-call]
+
+
 @dataclass(frozen=True)
 class Metrics:
     """Countable properties of one parser's markdown for one document."""
@@ -100,6 +109,7 @@ def measure(markdown: str, *, parser: str, pages: int, seconds: float) -> Metric
 
 
 def page_count(path: Path) -> int:
+    _quiet_mupdf()
     doc = pymupdf.open(path)  # type: ignore[no-untyped-call]
     try:
         return int(doc.page_count)
@@ -184,6 +194,7 @@ def first_pages(path: Path, count: int, destination: Path, *, start: int = 0) ->
     one corpus book contained two lines of code, which silently turned a
     comparison of code handling into a comparison of front matter.
     """
+    _quiet_mupdf()
     doc = pymupdf.open(path)  # type: ignore[no-untyped-call]
     if not doc.is_pdf:
         # select() is PDF-only, and a *ranged* convert_to_pdf fails outright on
@@ -224,6 +235,7 @@ def compare(
     """
     import time
 
+    _quiet_mupdf()
     wanted = set(parsers) if parsers else set(available_parsers())
     results: list[Metrics] = []
     total_pages = page_count(path)
@@ -233,6 +245,10 @@ def compare(
             continue
         started = time.perf_counter()
         file_format = "epub" if path.suffix.lower() == ".epub" else "pdf"
+        # Narrate progress. A first marker run downloads models and then works
+        # in silence for many minutes; without these lines that is
+        # indistinguishable from a hang, and has been mistaken for one twice.
+        print(f"  {parser.name}: parsing {total_pages} page(s)…", flush=True)
         try:
             markdown = ParserChain([parser]).extract(path, file_format, lambda _: None).markdown
         except Exception as exc:  # noqa: BLE001 - an unavailable parser is a result
@@ -245,6 +261,9 @@ def compare(
                 )
             )
             continue
+        print(
+            f"  {parser.name}: done in {time.perf_counter() - started:.0f}s", flush=True
+        )
         if dump_to is not None:
             # A marker run costs twenty minutes; throwing its output away and
             # keeping five integers is a poor trade. The counts say *whether*
