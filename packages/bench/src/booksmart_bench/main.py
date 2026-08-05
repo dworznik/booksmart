@@ -93,6 +93,23 @@ AssetsOption = Annotated[
 ]
 
 
+def print_path(label: str, path: Path) -> None:
+    """Report a path, whole.
+
+    Rich word-wraps at the console width, and a path is one long token with no
+    break points it is willing to respect — so a long one is split across lines
+    mid-token. That makes it uncopyable, and it makes the break look like part
+    of the path.
+
+    Not a cosmetic complaint. Under a non-tty Rich assumes 80 columns, and a
+    macOS temp path runs to about 120 characters, so a path a verb had just
+    reported was not literally present in its own output. Linux temp paths are
+    around 68 and fit, which is why the whole suite passed in CI and failed on
+    the first developer machine to try it.
+    """
+    console.print(f"{label}: [cyan]{escape(str(path))}[/cyan]", soft_wrap=True)
+
+
 def _prepare(assets: Path | None) -> tuple[Path, Truth]:
     """Resolve and check what every verb needs, before anything is spent.
 
@@ -101,7 +118,7 @@ def _prepare(assets: Path | None) -> tuple[Path, Truth]:
     satisfy scores zero and reads as a retrieval regression, not as a typo.
     """
     resolved = resolve_assets(assets)
-    console.print(f"assets: [cyan]{escape(str(resolved))}[/cyan]")
+    print_path("assets", resolved)
 
     truth = load_truth(resolved)
     console.print(
@@ -116,7 +133,7 @@ def _resolve_and_report(verb: str, assets: Path | None) -> None:
     """A verb that is specced but not built yet: check the inputs for real, then
     refuse. Exiting 0 here would read as a passing benchmark in a script."""
     _prepare(assets)
-    console.print(f"corpus: [cyan]{escape(str(corpus_home(load_settings())))}[/cyan]")
+    print_path("corpus", corpus_home(load_settings()))
     raise BenchError(f"`{verb}` is not implemented yet — it will {VERBS[verb]}.")
 
 
@@ -164,7 +181,7 @@ def ingest(
     """
     resolved, truth = _prepare(assets)
     settings = load_settings()
-    console.print(f"corpus: [cyan]{escape(str(corpus_home(settings)))}[/cyan]")
+    print_path("corpus", corpus_home(settings))
 
     outcome = ingest_scope(
         resolved,
@@ -226,7 +243,7 @@ def score(
     _print_scores(scores)
     if out is not None:
         out.write_text(json.dumps(scores.as_dict(), indent=2) + "\n")
-        console.print(f"wrote [cyan]{escape(str(out))}[/cyan]")
+        print_path("wrote", out)
 
 
 @app.command()
@@ -253,7 +270,7 @@ def report(
     markdown = render(before, after, verdict)
     if out is not None:
         out.write_text(markdown)
-        console.print(f"wrote [cyan]{escape(str(out))}[/cyan]")
+        print_path("wrote", out)
     else:
         # markup=False already stops Rich reading brackets as tags; escaping as
         # well would print the backslashes and disagree with what --out writes.

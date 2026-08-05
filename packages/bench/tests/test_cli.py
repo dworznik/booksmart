@@ -56,6 +56,31 @@ class TestSurface:
         assert "--assets" not in result.stderr  # i.e. not an unknown-option error
 
 
+    def test_a_long_path_is_reported_whole(
+        self,
+        runner: CliRunner,
+        write_truth: Callable[..., Path],
+        write_run: Callable[..., Path],
+        tmp_path: Path,
+    ) -> None:
+        """A path is one long token, and Rich breaks it mid-token to fit the
+        console width — so the path a verb just reported is not literally in its
+        own output, and cannot be copied out of it.
+
+        The depth here is the point. Under a non-tty Rich assumes 80 columns; a
+        Linux temp path is around 68 characters and fits, a macOS one is around
+        120 and does not. Left to the ambient temp directory this passes on CI
+        and fails on a developer's machine, which is exactly what happened.
+        """
+        deep = tmp_path.joinpath(*["nested-enough-to-wrap"] * 4)
+        assets = write_truth("a-book", root=deep)
+        assert len(str(assets)) > 80, "fixture must exceed the assumed console width"
+
+        result = runner.invoke(app, ["score", str(write_run()), "--assets", str(assets)])
+
+        assert str(assets) in result.stdout
+
+
 class TestUnresolvedAssets:
     @pytest.mark.parametrize("verb", VERB_NAMES)
     def test_missing_assets_fails_with_the_remedy(
