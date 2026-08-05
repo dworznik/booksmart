@@ -42,6 +42,9 @@ EVAL_PDF = os.environ.get("BOOKSMART_PARSER_EVAL_PDF", "")
 # a poor first run — long enough to be indistinguishable from a hang. Default to
 # a slice; set to 0 for the whole document once the shape of the answer is known.
 EVAL_PAGES = int(os.environ.get("BOOKSMART_PARSER_EVAL_PAGES", "20"))
+# Where to write each parser's markdown, so a twenty-minute marker run leaves
+# something a human can diff. Unset, nothing is written.
+EVAL_DUMP = os.environ.get("BOOKSMART_PARSER_EVAL_DUMP", "")
 
 
 class TestMetrics:
@@ -165,7 +168,8 @@ class TestRealEval:
         if EVAL_PAGES:
             path = parser_eval.first_pages(source, EVAL_PAGES, tmp_path / source.name)
 
-        results = parser_eval.compare(path)
+        dump = Path(EVAL_DUMP).expanduser() if EVAL_DUMP else None
+        results = parser_eval.compare(path, dump_to=dump)
 
         scope = f"first {parser_eval.page_count(path)}" if EVAL_PAGES else "all"
         print(f"\n{source.name} — {scope} of {parser_eval.page_count(source)} pages")
@@ -175,4 +179,6 @@ class TestRealEval:
                 "\nmarker is not installed, so this compares one parser against "
                 "itself. See docs/research/parser-comparison.md."
             )
+        if dump is not None:
+            print(f"markdown written to {dump}")
         assert results, "no parser could be run at all"

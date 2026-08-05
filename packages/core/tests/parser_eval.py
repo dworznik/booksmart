@@ -187,7 +187,11 @@ def first_pages(path: Path, count: int, destination: Path) -> Path:
     return destination
 
 
-def compare(path: Path, parsers: Sequence[str] | None = None) -> list[Metrics]:
+def compare(
+    path: Path,
+    parsers: Sequence[str] | None = None,
+    dump_to: Path | None = None,
+) -> list[Metrics]:
     """Run each named parser over one document and measure its output.
 
     Each parser is driven through a one-element ``ParserChain`` rather than the
@@ -216,6 +220,12 @@ def compare(path: Path, parsers: Sequence[str] | None = None) -> list[Metrics]:
                 )
             )
             continue
+        if dump_to is not None:
+            # A marker run costs twenty minutes; throwing its output away and
+            # keeping five integers is a poor trade. The counts say *whether*
+            # the parsers differ; only the markdown says *how*.
+            dump_to.mkdir(parents=True, exist_ok=True)
+            (dump_to / f"{path.stem}.{parser.name}.md").write_text(markdown)
         results.append(
             measure(
                 markdown,
