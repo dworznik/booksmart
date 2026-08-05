@@ -170,6 +170,23 @@ def build_probe_pdf(path: Path, *, pages: int = 3) -> Path:
     return path
 
 
+def first_pages(path: Path, count: int, destination: Path) -> Path:
+    """A copy of the first ``count`` pages, for comparing parsers affordably.
+
+    marker is an ML pipeline and orders of magnitude slower than pymupdf4llm, so
+    running both over a whole manual is a poor first move — long enough that it
+    is hard to tell a slow parse from a hung one. Both parsers see the identical
+    truncated document, so the comparison stays fair; only its scope narrows.
+    """
+    doc = pymupdf.open(path)  # type: ignore[no-untyped-call]
+    try:
+        doc.select(range(min(count, doc.page_count)))
+        doc.save(destination)
+    finally:
+        doc.close()
+    return destination
+
+
 def compare(path: Path, parsers: Sequence[str] | None = None) -> list[Metrics]:
     """Run each named parser over one document and measure its output.
 

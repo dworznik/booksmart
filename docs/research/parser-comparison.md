@@ -32,6 +32,14 @@ $ BOOKSMART_PARSER_EVAL_PDF=~/Downloads/bash.pdf \
     uv run pytest packages/core/tests/test_parser_eval.py -k RealEval -s
 ```
 
+`BOOKSMART_PARSER_EVAL_PAGES` caps how much of the document is compared, and
+defaults to **20**. Both parsers see the identical truncated file, so the
+comparison stays fair and only its scope narrows. Raise it — or set it to `0`
+for the whole document — once the shape of the answer is clear. The default
+matters: marker is an ML pipeline and orders of magnitude slower than
+`pymupdf4llm`, and a whole manual takes long enough to be indistinguishable from
+a hang. On the Bash manual, 20 pages is 28 seconds against 4m42s for all 214.
+
 ## Which document
 
 **Use two.** A single document cannot answer the question, and assuming
@@ -55,8 +63,9 @@ listings throughout:
 $ curl -LO https://www.gnu.org/software/bash/manual/bash.pdf
 ```
 
-Alternative: `https://cran.r-project.org/doc/manuals/R-intro.pdf` (103pp, GPL
-documentation, denser in listings).
+Alternative: `https://cran.r-project.org/doc/manuals/R-intro.pdf` (103pp,
+denser in listings; its front matter grants verbatim redistribution provided the
+copyright notice is retained).
 
 Neither is strictly public domain — both are free documentation under a copyleft
 licence, which is why they are *downloaded* rather than committed. Nothing in
@@ -94,22 +103,29 @@ before trusting any of this, since marker moves quickly.
 
 marker is deliberately undeclared (see #80). Installing it into the workspace
 environment would add `torch` to `uv.lock` and change what every contributor
-pulls. Keep it in a throwaway environment:
+pulls.
+
+**Use `--with`, and do not create a virtualenv for this.** It layers marker onto
+the project environment for one invocation:
 
 ```console
-$ uv venv .venv-marker --python 3.12
-$ source .venv-marker/bin/activate
-$ uv pip install marker-pdf booksmart-core
+$ BOOKSMART_PARSER_EVAL_PDF=./bash.pdf \
+    uv run --with marker-pdf pytest packages/core/tests/test_parser_eval.py -k RealEval -s
 ```
 
-Or, for a single run without any venv at all:
+Verified: this leaves `uv.lock` byte-identical and does not install marker into
+`.venv`. Nothing persists.
 
-```console
-$ uv run --with marker-pdf pytest packages/core/tests/test_parser_eval.py -k RealEval -s
+Do **not** also activate a separate virtualenv. `uv run` targets the project
+environment, so an activated one is ignored and uv says so:
+
+```
+warning: `VIRTUAL_ENV=.venv-marker` does not match the project environment path
+`.venv` and will be ignored; use `--active` to target the active environment
 ```
 
-The `--with` form is the safer default: nothing persists, and `uv.lock` is
-untouched.
+The run is fine — that warning means `--with` did its job — but the virtualenv
+was pointless. `deactivate` first and the warning goes away.
 
 ### 2. What gets pulled in
 

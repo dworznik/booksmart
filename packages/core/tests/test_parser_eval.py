@@ -38,6 +38,10 @@ from booksmart_core.parsing import ParseFailure, ParserChain, build_default_chai
 from . import parser_eval
 
 EVAL_PDF = os.environ.get("BOOKSMART_PARSER_EVAL_PDF", "")
+# Marker is an ML pipeline and far slower than pymupdf4llm, so a whole manual is
+# a poor first run — long enough to be indistinguishable from a hang. Default to
+# a slice; set to 0 for the whole document once the shape of the answer is known.
+EVAL_PAGES = int(os.environ.get("BOOKSMART_PARSER_EVAL_PAGES", "20"))
 
 
 class TestMetrics:
@@ -153,13 +157,18 @@ class TestRealEval:
     interesting."""
 
     @pytest.mark.skipif(not EVAL_PDF, reason="set BOOKSMART_PARSER_EVAL_PDF to a PDF")
-    def test_compare_every_available_parser(self) -> None:
-        path = Path(EVAL_PDF).expanduser()
-        assert path.is_file(), f"no such file: {path}"
+    def test_compare_every_available_parser(self, tmp_path: Path) -> None:
+        source = Path(EVAL_PDF).expanduser()
+        assert source.is_file(), f"no such file: {source}"
+
+        path = source
+        if EVAL_PAGES:
+            path = parser_eval.first_pages(source, EVAL_PAGES, tmp_path / source.name)
 
         results = parser_eval.compare(path)
 
-        print(f"\n{path.name} — {parser_eval.page_count(path)} pages")
+        scope = f"first {parser_eval.page_count(path)}" if EVAL_PAGES else "all"
+        print(f"\n{source.name} — {scope} of {parser_eval.page_count(source)} pages")
         print(parser_eval.render(results))
         if not parser_eval.marker_is_installed():
             print(
