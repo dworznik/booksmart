@@ -50,6 +50,28 @@ asked, a book a run names that truth does not cover — each is reported under
 "not measured", because a slice that disappears from a report reads as one that
 passed.
 
+## The truth lint
+
+Truth is hand-authored in another repository against books this one never sees,
+so every verb lints it before spending anything. An **error** is truth that
+cannot be scored — a `loc:` naming no node, a duplicate node id, a kind that does
+not exist, a conceptual query that shares vocabulary with the node it expects. A
+**warning** is truth that is incomplete but honest, like an unpinned source or a
+book whose queries are not authored yet.
+
+One guard is worth knowing about before editing a `toc.yaml`. Entries are YAML
+flow mappings, and in a flow mapping a comma separates entries:
+
+```yaml
+- { id: "4.1", title: The call, apply, and bind methods }   # three keys, not two
+```
+
+That records a title of `"The call"`. Since structure fidelity matches nodes on
+normalised title, the node then cannot match the section it describes, and it
+scores as a detection failure rather than a quoting mistake. Any key outside
+`id`, `title` and `sections` is therefore an error naming the keys and the title
+as recorded. Quote titles containing `,` `?` `(` `)` `!` `#` `[` `]` `{` `}`.
+
 ## Assets and corpora
 
 The harness owns no data. Two locations, resolved separately:

@@ -57,6 +57,12 @@ PLACEHOLDER = "TBD"
 
 BOOK_FILES = ("book.yaml", "toc.yaml", "queries.yaml", "concepts.yaml", "index-pairs.yaml")
 
+# Everything a toc.yaml entry is allowed to say. Only a chapter takes children —
+# a section carrying `sections` is authoring a third level this schema has no
+# way to read, which is worth reporting rather than ignoring.
+ENTRY_KEYS: frozenset[str] = frozenset({"id", "title"})
+CHAPTER_KEYS: frozenset[str] = ENTRY_KEYS | {"sections"}
+
 
 # --- the shapes -------------------------------------------------------------
 
@@ -67,6 +73,19 @@ class TocNode:
     title: str
     kind: NodeKind
     parent: str | None = None
+
+
+@dataclass(frozen=True)
+class StrayKeys:
+    """A node that loaded, and whose entry said something the schema cannot read.
+
+    Deliberately not folded into ``malformed_nodes``, which means an entry that
+    never became a node at all. This one did become a node, so nothing downstream
+    will hesitate over it — which is what makes it worth a finding of its own.
+    """
+
+    node_id: str
+    keys: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -128,6 +147,9 @@ class BookTruth:
     # Entries the loader could not turn into nodes at all, described well enough
     # for the lint to name them.
     malformed_nodes: tuple[str, ...] = ()
+    # Nodes whose entry carried keys the schema does not define. Kept apart from
+    # malformed_nodes because these did load.
+    stray_keys: tuple[StrayKeys, ...] = ()
 
     @property
     def is_pinned(self) -> bool:
@@ -156,6 +178,21 @@ class Finding:
 # --- loading ----------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _Toc:
+    """One toc.yaml, and everything wrong with it.
+
+    A named carrier rather than a tuple of four, because three of the four are
+    problem lists and a caller unpacking them positionally is one edit away from
+    reporting duplicates as malformations.
+    """
+
+    nodes: dict[str, TocNode]
+    duplicate_ids: tuple[str, ...]
+    malformed: tuple[str, ...]
+    stray_keys: tuple[StrayKeys, ...]
+
+
 def load_truth(assets: Path) -> Truth:
     """Read every book and area under ``<assets>/truth``."""
     root = assets / "truth"
@@ -176,7 +213,7 @@ def load_truth(assets: Path) -> Truth:
 
 def _load_book(directory: Path) -> BookTruth:
     identity = _read_mapping(directory / "book.yaml")
-    nodes, duplicates, malformed = _read_toc(directory / "toc.yaml")
+    toc = _read_toc(directory / "toc.yaml")
     raw_source = identity.get("source")
     source: Mapping[str, object] = raw_source if isinstance(raw_source, dict) else {}
     sha256 = source.get("sha256")
@@ -189,9 +226,10 @@ def _load_book(directory: Path) -> BookTruth:
         source_sha256=None if sha256 is None else str(sha256),
         source_file=None if source_file is None else str(source_file),
         authors=_strings(identity, "authors"),
-        nodes=nodes,
-        duplicate_ids=duplicates,
-        malformed_nodes=malformed,
+        nodes=toc.nodes,
+        duplicate_ids=toc.duplicate_ids,
+        malformed_nodes=toc.malformed,
+        stray_keys=toc.stray_keys,
         queries=_read_queries(directory / "queries.yaml"),
         concepts=tuple(
             Concept(
@@ -220,11 +258,12 @@ def _load_areas(directory: Path) -> dict[str, tuple[Query, ...]]:
     }
 
 
-def _read_toc(path: Path) -> tuple[dict[str, TocNode], tuple[str, ...], tuple[str, ...]]:
+def _read_toc(path: Path) -> _Toc:
     document = _read_mapping(path)
     nodes: dict[str, TocNode] = {}
     duplicates: list[str] = []
     malformed: list[str] = []
+    stray: list[StrayKeys] = []
 
     def add(entry: dict[str, object], kind: NodeKind, parent: str | None = None) -> str | None:
         """Record one entry, or note why it could not be recorded.
@@ -242,6 +281,13 @@ def _read_toc(path: Path) -> tuple[dict[str, TocNode], tuple[str, ...], tuple[st
             duplicates.append(node_id)
             return None
         nodes[node_id] = TocNode(id=node_id, title=title, kind=kind, parent=parent)
+        # Only for entries that became nodes. An id-less or duplicated entry is
+        # already reported by something that names it, and two findings for one
+        # line says less than one.
+        allowed = CHAPTER_KEYS if kind == "chapter" else ENTRY_KEYS
+        extra = tuple(sorted(set(entry) - allowed))
+        if extra:
+            stray.append(StrayKeys(node_id=node_id, keys=extra))
         return node_id
 
     for entry in _entries(document, "front_matter"):
@@ -253,7 +299,12 @@ def _read_toc(path: Path) -> tuple[dict[str, TocNode], tuple[str, ...], tuple[st
     for entry in _entries(document, "back_matter"):
         add(entry, "back-matter")
 
-    return nodes, tuple(duplicates), tuple(malformed)
+    return _Toc(
+        nodes=nodes,
+        duplicate_ids=tuple(duplicates),
+        malformed=tuple(malformed),
+        stray_keys=tuple(stray),
+    )
 
 
 def _read_queries(path: Path) -> tuple[Query, ...]:
@@ -348,6 +399,7 @@ def _lint_book(slug: str, book: BookTruth) -> list[Finding]:
         )
     for malformed in book.malformed_nodes:
         findings.append(Finding("error", f"{where}/toc.yaml", malformed))
+    findings.extend(_lint_stray_keys(f"{where}/toc.yaml", book))
     if not book.is_pinned:
         findings.append(
             Finding(
@@ -381,6 +433,46 @@ def _lint_book(slug: str, book: BookTruth) -> list[Finding]:
     findings.extend(
         _lint_gated(f"{where}/index-pairs.yaml", [p.gated for p in book.index_pairs])
     )
+    return findings
+
+
+def _lint_stray_keys(where: str, book: BookTruth) -> list[Finding]:
+    """A node whose entry says something the schema cannot read.
+
+    An error rather than a warning, because the likely cause does not merely add
+    something unused — it takes something away. Entries are written as YAML flow
+    mappings, one per line, where a comma separates entries:
+
+        - { id: "4.1", title: The call, apply, and bind methods }
+
+    That is not one entry with two keys. It is a title of "The call" plus two
+    keys named after the rest of the heading, and the node loads with a title
+    that is a fragment of the real one. Structure fidelity matches on normalised
+    title, so the node can never match the section it describes — it scores a
+    false negative and a false positive on every run, and reads as a detection
+    problem rather than a quoting mistake. Nothing else here can see it: the
+    loader ignores keys it does not know, which is the right default for
+    hand-authored files and exactly wrong for this one.
+
+    So the finding names the keys, shows the title as it was recorded, and says
+    what to do. Reporting only the stray keys would leave the reader to work out
+    why they mattered, which is the part that is hard to see.
+    """
+    findings: list[Finding] = []
+    for stray in book.stray_keys:
+        listed = ", ".join(repr(key) for key in stray.keys)
+        noun = "key" if len(stray.keys) == 1 else "keys"
+        findings.append(
+            Finding(
+                "error",
+                where,
+                f"node {stray.node_id!r} has {noun} the schema does not define "
+                f"({listed}), and its title is recorded as "
+                f"{book.nodes[stray.node_id].title!r}; if that title is cut short, "
+                "quote it — an unquoted comma in a flow-mapping title is read as an "
+                "entry separator",
+            )
+        )
     return findings
 
 
