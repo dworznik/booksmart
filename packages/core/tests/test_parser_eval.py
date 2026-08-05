@@ -213,7 +213,16 @@ class TestRealEval:
                 source, EVAL_PAGES, tmp_path / source.name, start=EVAL_START
             )
 
-        dump = Path(EVAL_DUMP).expanduser() if EVAL_DUMP else None
+        # The range goes into the directory name so a mid-book run cannot
+        # overwrite a front-matter run — which one did, destroying the dumps
+        # that evidenced a content-loss finding.
+        dump = (
+            Path(EVAL_DUMP).expanduser() / f"pages-{EVAL_START + 1}-{EVAL_START + EVAL_PAGES}"
+            if EVAL_DUMP and EVAL_PAGES
+            else Path(EVAL_DUMP).expanduser() / "all-pages"
+            if EVAL_DUMP
+            else None
+        )
         results = parser_eval.compare(path, dump_to=dump)
 
         sliced = parser_eval.page_count(path)
