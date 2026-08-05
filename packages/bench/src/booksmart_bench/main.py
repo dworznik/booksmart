@@ -10,6 +10,7 @@ along exactly those seams:
     run      execute the benchmarks against a corpus, emit a run file
     score    run file x truth -> scores (pure)
     report   render two runs side by side (pure)
+    sources  check the book files a handover dropped in, and pin them (pure)
 
 Every verb resolves its assets checkout up front, so a wrong ``--assets`` is a
 one-line error before anything is spent.
@@ -36,6 +37,7 @@ from booksmart_bench.judge import resolve_judge
 from booksmart_bench.report import render
 from booksmart_bench.scoring import Scores, compare, load_run
 from booksmart_bench.scoring import score as score_run
+from booksmart_bench.sources import Catalogue, Catalogued, catalogue, pin
 from booksmart_bench.truth import Finding, Truth, errors_in, lint, load_truth
 
 F = TypeVar("F", bound=Callable[..., object])
@@ -72,6 +74,7 @@ VERBS = {
     "run": "execute the benchmarks and emit a run file",
     "score": "compare a run file against truth",
     "report": "render two runs side by side",
+    "sources": "check and pin the book files in the assets checkout",
 }
 
 app = typer.Typer(
@@ -334,6 +337,97 @@ def report(
         raise BenchError(
             f"{len(verdict.regressions)} dimension(s) regressed beyond threshold."
         )
+
+
+@app.command()
+@handle_errors
+def sources(
+    assets: AssetsOption = None,
+    write: Annotated[
+        bool,
+        typer.Option(
+            "--pin",
+            help="Rename identified files to what truth expects and write their sha256.",
+        ),
+    ] = False,
+) -> None:
+    """Check the book files in the assets checkout, and optionally pin them.
+
+    Identifies each file by the chapter titles it contains rather than by its
+    name, so a wrong edition or a swapped file is caught before an ingest pays
+    for it. Read-only without `--pin`.
+    """
+    resolved, truth = _prepare(assets)
+    catalogued = catalogue(resolved, truth)
+    _print_catalogue(catalogued, truth)
+
+    if not write:
+        if catalogued.identified:
+            console.print("\nread-only. re-run with [cyan]--pin[/cyan] to rename and pin.")
+        return
+
+    actions = pin(resolved, catalogued)
+    for action in actions:
+        console.print(f"[green]pinned[/green] {escape(action)}")
+    if not actions:
+        console.print("[yellow]nothing to pin[/yellow]")
+
+
+def _print_catalogue(catalogued: Catalogue, truth: Truth) -> None:
+    """Every file, then every book still without one.
+
+    Both halves are printed even when one is empty. A report that showed only
+    what was found would read as a complete handover on the day it is half done.
+    """
+    if catalogued.ignored:
+        console.print(
+            f"ignoring [cyan]{len(catalogued.ignored)}[/cyan] non-book file(s): "
+            f"{escape(', '.join(catalogued.ignored))}"
+        )
+    for entry in catalogued.entries:
+        _print_entry(entry)
+
+    for slug, group in sorted(catalogued.contested.items()):
+        names = ", ".join(entry.artifact.path.name for entry in group)
+        console.print(
+            f"[red]contested[/red] {escape(slug)} is claimed by {len(group)} files "
+            f"({escape(names)}); none pinned"
+        )
+
+    console.print(
+        f"\nidentified [cyan]{len(catalogued.identified)}[/cyan] of "
+        f"[cyan]{len(truth.books)}[/cyan] book(s)"
+    )
+    for slug in catalogued.missing:
+        book = truth.books[slug]
+        edition = f"{book.edition} ed." if book.edition else "any edition"
+        console.print(
+            f"  [yellow]missing[/yellow] {escape(slug)} — {escape(book.title)} "
+            f"({escape(edition)}{', ' + book.year if book.year else ''})"
+        )
+
+
+def _print_entry(entry: Catalogued) -> None:
+    artifact = entry.artifact
+    status = "[green]ok[/green]" if entry.ok else "[red]check[/red]"
+    console.print(f"\n{status} {escape(artifact.path.name)}")
+    console.print(
+        f"     {artifact.pages} page(s), ~{artifact.chars_per_page} chars/page, "
+        f"sha256 {artifact.sha256[:16]}…"
+    )
+    if entry.slug:
+        runner = entry.match.runner_up
+        tail = f", runner-up {runner.slug} {runner.score:.0%}" if runner else ""
+        console.print(
+            f"     is [cyan]{escape(entry.slug)}[/cyan] on {entry.match.score:.0%} of its "
+            f"authored chapter titles{escape(tail)}"
+        )
+    if entry.rename_to:
+        console.print(f"     rename to [cyan]{escape(entry.rename_to)}[/cyan]")
+    for note in entry.notes:
+        console.print(f"     [yellow]note[/yellow] {escape(note)}")
+    for problem in entry.problems:
+        console.print(f"     [red]problem[/red] {escape(problem)}")
 
 
 def _print_scores(scores: Scores) -> None:

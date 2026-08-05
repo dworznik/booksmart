@@ -25,6 +25,24 @@ $ booksmart-bench score <run-file> [--out s.json]   # run file x truth -> scores
 $ booksmart-bench report <base> <cand> [--out r.md] # two runs, side by side
 ```
 
+...plus one verb that is not an artefact boundary:
+
+```console
+$ booksmart-bench sources [--pin]                   # check the book files, pin them
+```
+
+`sources` identifies each file in the assets checkout by the chapter and section
+titles it contains — not by its filename, which is whatever the last person
+typed. It exists because the only thing tying truth to a book is a sha256 in
+`book.yaml`, and every way of getting that wrong is silent: a later edition keeps
+most of its headings and so scores highly against truth authored for the earlier
+one, and a scan with no text layer ingests happily while benchmarking the OCR
+parser instead of the one every other book used. So a file has to beat the
+runner-up by a margin to be named at all, an edition or copyright year the file
+states about *itself* has to agree with `book.yaml`, and `--pin` writes nothing
+for a book two files both claim. Reading every page of a long book is what makes
+identification reliable, so allow a few seconds per book.
+
 `ingest` is idempotent: a book whose bytes and configuration are unchanged is
 skipped. `score` and `report` are pure — no pipeline, no corpus, no network —
 and `report` exits non-zero on a regression so it can gate a change without

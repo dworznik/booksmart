@@ -137,6 +137,13 @@ class BookTruth:
     # property of the artifact, not of the slug.
     source_file: str | None = None
     authors: tuple[str, ...] = ()
+    # Stated in book.yaml so a handover can be checked against it. Edition is the
+    # expensive thing to get wrong — chapter numbering moves between editions, so
+    # truth authored for one scores the other as a pipeline that lost half the
+    # book — and these three are what a file says about itself.
+    edition: str = ""
+    year: str = ""
+    isbn: str = ""
 
     queries: tuple[Query, ...] = ()
     concepts: tuple[Concept, ...] = ()
@@ -226,6 +233,9 @@ def _load_book(directory: Path) -> BookTruth:
         source_sha256=None if sha256 is None else str(sha256),
         source_file=None if source_file is None else str(source_file),
         authors=_strings(identity, "authors"),
+        edition=str(identity.get("edition", "")),
+        year=str(identity.get("publication_year", "")),
+        isbn=str(identity.get("isbn", "")),
         nodes=toc.nodes,
         duplicate_ids=toc.duplicate_ids,
         malformed_nodes=toc.malformed,
