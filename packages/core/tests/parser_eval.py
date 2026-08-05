@@ -1,0 +1,214 @@
+"""Machinery for comparing the parsers in the chain on the same document.
+
+Not a test module (no ``test_`` prefix, so pytest does not collect it): this is
+what ``test_parser_eval.py`` drives.
+
+The chain prefers ``marker`` over ``pymupdf`` for PDFs, but ``marker-pdf`` is not
+a declared dependency and is not installed in CI, so in practice every PDF this
+project has ever parsed went through ``pymupdf4llm`` and ``MarkerParser`` has
+never run. Before adopting marker — a multi-gigabyte ML dependency — or removing
+the branch of the chain that prefers it, the difference has to be measured on
+the kind of document this project ingests.
+
+What is measured, and why these five numbers:
+
+- **headings** — what structure detection has to work from. The benchmark scores
+  structure fidelity against a hand-authored table of contents, so a parser that
+  loses headings loses that dimension directly.
+- **fenced code blocks** — programming books are substantially code, and a
+  listing flattened into prose is both wrong and actively misleading to a
+  summariser.
+- **page furniture** — running headers and bare page numbers left in the text
+  stream end up in summaries and embeddings, where they are pure noise.
+- **letter-spaced runs** — display type set with tracking ("S M A L L T A L K")
+  extracts as garbage tokens.
+- **characters per page** — the crude check that any text came out at all.
+
+None of these is quality. They are proxies chosen because they are countable
+without a human reading the output, and they should be read alongside a sample
+of the markdown rather than instead of one.
+
+A caution learned from running this: ``pymupdf4llm``'s code detection is
+font-dependent rather than absent. It fences code set in a face it recognises as
+monospace (70 fences per 20 pages of the GNU Bash manual) and misses code set in
+a face it does not (0 per 40 pages of one typeset programming book). A single
+document therefore cannot answer the question — run this over both a
+well-behaved manual and an awkward book before concluding anything.
+"""
+
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
+import pymupdf
+
+from booksmart_core.parsing import ParserChain, build_default_chain
+
+# Five or more single letters separated by spaces: the signature of display type
+# set with letter spacing, which extracts as one token per letter.
+_LETTER_SPACED = re.compile(r"(?:[A-Za-z] ){4,}[A-Za-z]")
+
+
+@dataclass(frozen=True)
+class Metrics:
+    """Countable properties of one parser's markdown for one document."""
+
+    parser: str
+    pages: int
+    characters: int
+    headings: int
+    code_fences: int
+    letter_spaced_runs: int
+    page_number_lines: int
+    seconds: float
+
+    @property
+    def characters_per_page(self) -> int:
+        return self.characters // self.pages if self.pages else 0
+
+    def as_row(self) -> str:
+        return (
+            f"{self.parser:22} {self.pages:6} {self.characters_per_page:8} "
+            f"{self.headings:9} {self.code_fences:7} {self.letter_spaced_runs:9} "
+            f"{self.page_number_lines:8} {self.seconds:8.1f}"
+        )
+
+    @staticmethod
+    def header() -> str:
+        return (
+            f"{'parser':22} {'pages':>6} {'chars/pg':>8} {'headings':>9} "
+            f"{'fences':>7} {'spaced':>9} {'pagenos':>8} {'secs':>8}"
+        )
+
+
+def measure(markdown: str, *, parser: str, pages: int, seconds: float) -> Metrics:
+    """Count the five proxies over one parser's output. Pure."""
+    lines = markdown.splitlines()
+    return Metrics(
+        parser=parser,
+        pages=pages,
+        characters=len(markdown),
+        headings=sum(1 for line in lines if line.lstrip().startswith("#")),
+        # Fences come in pairs; an odd count means an unterminated block, which
+        # is worth not rounding away, hence the explicit division.
+        code_fences=markdown.count("```") // 2,
+        letter_spaced_runs=sum(1 for line in lines if _LETTER_SPACED.search(line)),
+        page_number_lines=sum(1 for line in lines if line.strip().isdigit()),
+        seconds=seconds,
+    )
+
+
+def page_count(path: Path) -> int:
+    doc = pymupdf.open(path)  # type: ignore[no-untyped-call]
+    try:
+        return int(doc.page_count)
+    finally:
+        doc.close()
+
+
+def available_parsers(chain: ParserChain | None = None) -> list[str]:
+    """Which parsers in the chain could actually run on a PDF here.
+
+    Availability is environmental — marker is an undeclared optional import and
+    OCR needs a system binary — so a comparison has to say which parsers it was
+    able to include rather than assume three.
+    """
+    resolved = chain or build_default_chain()
+    names: list[str] = []
+    for parser in resolved._parsers:  # noqa: SLF001 - the chain exposes no accessor
+        if "pdf" not in parser.supported_formats:
+            continue
+        names.append(parser.name)
+    return names
+
+
+def marker_is_installed() -> bool:
+    """Whether ``MarkerParser`` would do anything but raise ParserUnavailable."""
+    try:
+        import marker.converters.pdf  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def build_probe_pdf(path: Path, *, pages: int = 3) -> Path:
+    """A small PDF carrying, deliberately, each thing the metrics count.
+
+    Generated rather than committed: a fixture nobody can read the licence of is
+    a fixture nobody can ship, and this one is reproducible from four lines of
+    intent — a heading, a code listing whose lines must not be run together,
+    a letter-spaced running header, and a bare page number.
+    """
+    listing = [
+        "def extract(path):",
+        "    return chain.extract(path)",
+        "",
+        "class Parser:",
+        "    name = 'probe'",
+    ]
+    doc = pymupdf.open()  # type: ignore[no-untyped-call]
+    for number in range(1, pages + 1):
+        page = doc.new_page()
+        page.insert_text((72, 40), "P R O B E   D O C U M E N T", fontsize=8)
+        page.insert_text((72, 90), f"Chapter {number}: Extracting Text", fontsize=18)
+        page.insert_textbox(
+            pymupdf.Rect(72, 110, 520, 260),
+            "Prose before the listing, long enough that the page carries real text "
+            "and not only furniture. " * 4,
+            fontsize=10,
+        )
+        page.insert_textbox(
+            pymupdf.Rect(72, 270, 520, 400),
+            "\n".join(listing),
+            fontsize=9,
+            fontname="cour",
+        )
+        page.insert_text((300, 760), str(number), fontsize=9)
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def compare(path: Path, parsers: Sequence[str] | None = None) -> list[Metrics]:
+    """Run each named parser over one document and measure its output.
+
+    Each parser is driven through a one-element ``ParserChain`` rather than the
+    default chain, because the default stops at the first success and the point
+    here is to see them all.
+    """
+    import time
+
+    wanted = set(parsers) if parsers else set(available_parsers())
+    results: list[Metrics] = []
+    total_pages = page_count(path)
+
+    for parser in build_default_chain()._parsers:  # noqa: SLF001
+        if parser.name not in wanted or "pdf" not in parser.supported_formats:
+            continue
+        started = time.perf_counter()
+        try:
+            markdown = ParserChain([parser]).extract(path, "pdf", lambda _: None).markdown
+        except Exception as exc:  # noqa: BLE001 - an unavailable parser is a result
+            results.append(
+                Metrics(
+                    parser=f"{parser.name} ({type(exc).__name__})",
+                    pages=total_pages, characters=0, headings=0, code_fences=0,
+                    letter_spaced_runs=0, page_number_lines=0,
+                    seconds=time.perf_counter() - started,
+                )
+            )
+            continue
+        results.append(
+            measure(
+                markdown,
+                parser=parser.name,
+                pages=total_pages,
+                seconds=time.perf_counter() - started,
+            )
+        )
+    return results
+
+
+def render(results: Sequence[Metrics]) -> str:
+    return "\n".join([Metrics.header(), *(result.as_row() for result in results)])
