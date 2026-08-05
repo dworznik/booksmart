@@ -64,16 +64,29 @@ _ALPHANUM = re.compile(r"[^a-z0-9]+")
 # word around it and a heading differing from the authored one by an invisible
 # character silently stops matching. Deleted rather than replaced, which is the
 # opposite of what happens to real punctuation.
-_INVISIBLE = str.maketrans({"­": None, "​": None, "‌": None, "‍": None, "﻿": None})
+#
+# Written as escapes, not as the characters themselves: a reader cannot see a
+# soft hyphen in a diff, and any tool that strips them would change what this
+# line means without changing how it looks.
+_INVISIBLE = str.maketrans(
+    dict.fromkeys("\u00ad\u200b\u200c\u200d\ufeff")  # soft hyphen, ZWSP, ZWNJ, ZWJ, BOM
+)
 
 # How a book states which edition it is, on a title page or in a copyright block.
-_ORDINALS = {
-    "first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3,
-    "fourth": 4, "4th": 4, "fifth": 5, "5th": 5, "sixth": 6, "6th": 6,
+# Digits are matched numerically rather than listed, so nothing here caps how
+# many editions a book is allowed to have had — a table stopping at "sixth" made
+# a seventh-edition book skip the edition check altogether, silently, which is
+# the one outcome this whole module exists to prevent.
+_ORDINAL_WORDS = {
+    "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
+    "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10,
+    "eleventh": 11, "twelfth": 12,
 }
 _EDITION_CLAIM = re.compile(
-    r"\b(" + "|".join(_ORDINALS) + r")\s+edition\b|\bedition\s+(\d)\b"
+    r"\b(?:(" + "|".join(_ORDINAL_WORDS) + r")|(\d{1,2})(?:st|nd|rd|th))\s+edition\b"
+    r"|\bedition\s+(\d{1,2})\b"
 )
+_ORDINAL_DIGITS = re.compile(r"^(\d{1,2})(?:st|nd|rd|th)?$")
 _COPYRIGHT_YEAR = re.compile(r"\bcopyright\b[^a-z0-9]{0,12}((?:19|20)\d{2})")
 
 # An edition claim counts only this close to the book's own title. Front matter
@@ -333,6 +346,22 @@ def audit(artifact: Artifact, book: BookTruth | None) -> tuple[tuple[str, ...], 
     return tuple(notes), tuple(problems)
 
 
+def parse_ordinal(text: str) -> int | None:
+    """"3rd", "third", "3" -> 3. None when it is not an ordinal at all.
+
+    Returning None matters: the caller reports the unread value rather than
+    treating it as "no edition stated", so a `book.yaml` this cannot parse is
+    visible instead of quietly disabling the check.
+    """
+    token = normalise(text).split(" ")[0] if text else ""
+    if not token:
+        return None
+    if token in _ORDINAL_WORDS:
+        return _ORDINAL_WORDS[token]
+    digits = _ORDINAL_DIGITS.match(token)
+    return int(digits.group(1)) if digits else None
+
+
 def _stated_editions(artifact: Artifact, book: BookTruth) -> set[int]:
     """Edition ordinals the file states *about itself*.
 
@@ -352,8 +381,8 @@ def _stated_editions(artifact: Artifact, book: BookTruth) -> set[int]:
         window = artifact.front[
             max(0, found.start() - EDITION_WINDOW) : found.end() + EDITION_WINDOW
         ]
-        for word, digit in _EDITION_CLAIM.findall(window):
-            stated.add(_ORDINALS[word] if word else int(digit))
+        for word, digit, after in _EDITION_CLAIM.findall(window):
+            stated.add(_ORDINAL_WORDS[word] if word else int(digit or after))
     return stated
 
 
@@ -387,7 +416,7 @@ def _edition_claims(artifact: Artifact, book: BookTruth) -> tuple[list[str], lis
     problems: list[str] = []
 
     stated_editions = _stated_editions(artifact, book)
-    expected_edition = _ORDINALS.get(normalise(book.edition).split(" ")[0]) if book.edition else None
+    expected_edition = parse_ordinal(book.edition)
     if expected_edition and stated_editions:
         if expected_edition in stated_editions:
             notes.append(f"edition {book.edition} confirmed in the file")
@@ -400,6 +429,13 @@ def _edition_claims(artifact: Artifact, book: BookTruth) -> tuple[list[str], lis
             )
     elif expected_edition:
         notes.append(f"edition {book.edition} not stated in the file — confirm by hand")
+    elif book.edition:
+        # Said out loud rather than skipped. An edition this cannot read means the
+        # check silently does nothing, which is the failure it exists to catch.
+        notes.append(
+            f"edition {book.edition!r} could not be read as an ordinal, so the edition "
+            "check did not run — confirm by hand"
+        )
 
     stated_years = {int(year) for year in _COPYRIGHT_YEAR.findall(artifact.front)}
     expected_year = int(book.year) if book.year.isdigit() else None

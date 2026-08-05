@@ -401,9 +401,10 @@ def _print_catalogue(catalogued: Catalogue, truth: Truth) -> None:
     for slug in catalogued.missing:
         book = truth.books[slug]
         edition = f"{book.edition} ed." if book.edition else "any edition"
+        year = f", {book.year}" if book.year else ""
         console.print(
             f"  [yellow]missing[/yellow] {escape(slug)} — {escape(book.title)} "
-            f"({escape(edition)}{', ' + book.year if book.year else ''})"
+            f"({escape(edition)}{escape(year)})"
         )
 
 

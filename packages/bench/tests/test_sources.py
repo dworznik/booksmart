@@ -21,6 +21,7 @@ from booksmart_bench.sources import (
     catalogue,
     identify,
     normalise,
+    parse_ordinal,
     pin,
     repin_line,
 )
@@ -324,15 +325,78 @@ class TestEditionClaims:
         assert "2013" in " ".join(entry.problems)
 
 
+class TestOrdinals:
+    """A table of ordinals that stops short does not fail loudly — it disables
+    the edition check, which is the one outcome this module exists to prevent."""
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [("1st", 1), ("3rd", 3), ("7th", 7), ("12th", 12), ("third", 3), ("10", 10)],
+    )
+    def test_it_reads_the_shapes_book_yaml_and_title_pages_use(
+        self, text: str, expected: int
+    ) -> None:
+        assert parse_ordinal(text) == expected
+
+    @pytest.mark.parametrize("text", ["", "revised", "anniversary"])
+    def test_it_declines_what_is_not_an_ordinal(self, text: str) -> None:
+        assert parse_ordinal(text) is None
+
+    def test_an_edition_past_the_sixth_is_still_checked(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        assets = write_truth(
+            "a-book",
+            book={
+                "title": "Placeholder Book",
+                "area": "an-area",
+                "edition": "7th",
+                "source": {"file": "sources/a.pdf", "sha256": "TBD"},
+            },
+        )
+        (path,) = drop(assets, "a.pdf")
+        artifact = make_artifact(
+            path, text="Placeholder Book Eighth Edition First Chapter Widgets And Sprockets Grommets"
+        )
+
+        entry = catalogue(assets, load_truth(assets), read=lambda _: artifact).entries[0]
+
+        assert not entry.ok
+        assert "8th" in " ".join(entry.problems)
+
+    def test_an_unreadable_edition_says_so_rather_than_going_quiet(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        """Silence here is indistinguishable from a passing check."""
+        assets = write_truth(
+            "a-book",
+            book={
+                "title": "Placeholder Book",
+                "area": "an-area",
+                "edition": "20th Anniversary",
+                "source": {"file": "sources/a.pdf", "sha256": "TBD"},
+            },
+        )
+        (path,) = drop(assets, "a.pdf")
+        artifact = make_artifact(
+            path, text="Placeholder Book First Chapter Widgets And Sprockets Grommets"
+        )
+
+        entry = catalogue(assets, load_truth(assets), read=lambda _: artifact).entries[0]
+
+        # 20th parses, so this one is checked rather than skipped.
+        assert "20" in " ".join(entry.notes) or "20th" in " ".join(entry.notes)
+
+
 class TestNormalise:
     def test_soft_hyphens_are_removed_not_turned_into_word_breaks(self) -> None:
         """Some PDFs carry a soft hyphen at every possible break point. Treating
         one as punctuation splits the word around it, and a heading that differs
         from the authored one by an invisible character stops matching."""
-        assert normalise("Refactor­ing") == "refactoring"
+        assert normalise("Refactor\u00ading") == "refactoring"
 
     def test_zero_width_characters_go_the_same_way(self) -> None:
-        assert normalise("Extract​Function") == "extractfunction"
+        assert normalise("Extract\u200bFunction") == "extractfunction"
 
 
 class TestCatalogue:
