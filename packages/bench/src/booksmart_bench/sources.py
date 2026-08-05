@@ -52,10 +52,16 @@ MIN_SCORE = 0.4
 # share most of their chapter titles, so a near-tie is the signal that matters.
 MARGIN = 0.15
 
-# Where a book states its own edition, ISBN and year. Claims are read from here
-# and nowhere else: a bibliography citing another edition of the same title, or
-# an author's preface recalling their first, is not the book identifying itself.
-FRONT_PAGES = 14
+# How much of the start of a book counts as its front matter, where it states
+# its own edition, ISBN and year. Claims are read from here and nowhere else: a
+# bibliography citing another edition of the same title, or an author's preface
+# recalling their first, is not the book identifying itself.
+#
+# Measured in characters rather than pages, because an EPUB "page" is a synthetic
+# reflow unit and not a page at all — around 860 characters against a PDF's 2000.
+# Fourteen pages of one is not fourteen pages of the other, and a POODR EPUB put
+# its copyright page outside the window while every PDF kept theirs inside it.
+FRONT_CHARS = 25_000
 
 _ALPHANUM = re.compile(r"[^a-z0-9]+")
 
@@ -169,13 +175,40 @@ class Catalogue:
     ignored: tuple[str, ...] = ()
 
 
+def _silence_mupdf() -> None:
+    """Stop MuPDF narrating stylesheets it cannot parse."""
+    pymupdf.TOOLS.mupdf_display_errors(False)  # type: ignore[no-untyped-call]
+    pymupdf.TOOLS.mupdf_display_warnings(False)  # type: ignore[no-untyped-call]
+
+
+def fingerprint(path: Path) -> tuple[int, int]:
+    """Enough of a file's identity to notice it changing under us."""
+    stat = path.stat()
+    return stat.st_size, stat.st_mtime_ns
+
+
 def read_artifact(path: Path) -> Artifact:
     """Open one file and take everything from it that identification needs.
 
     The hash is computed even for a file that will not open, so a report can
     still name the bytes somebody has to go and replace.
+
+    Two things here are about the setting rather than the format. A handover
+    arrives by copying fifteen large files into a directory, so this routinely
+    runs against a file that is still being written — which produces a confident
+    and completely wrong verdict, usually "no pages". The fingerprint either side
+    of the read catches that and says so instead of guessing.
+
+    And MuPDF is voluble about EPUB stylesheets it cannot parse: one Calibre-
+    produced file emitted megabytes of `unicode-range` complaints while opening
+    perfectly well. Those go to MuPDF's own message stream, which shell
+    redirection does not reach, so they are silenced here. Only the display is
+    suppressed — a file that genuinely cannot be opened still raises, and is
+    still caught below.
     """
+    before = fingerprint(path)
     digest = sha256_of(path)
+    _silence_mupdf()
     try:
         doc = pymupdf.open(path)  # type: ignore[no-untyped-call]
     except Exception as exc:  # noqa: BLE001 - any failure to open means unusable
@@ -216,13 +249,24 @@ def read_artifact(path: Path) -> Artifact:
         body = [_text(doc, index) for index in range(pages)]
         outline = " ".join(entry[1] for entry in doc.get_toc())
 
+    if fingerprint(path) != before:
+        return Artifact(
+            path=path,
+            sha256=digest,
+            pages=pages,
+            chars_per_page=0,
+            text="",
+            unreadable="the file changed while it was being read; a copy is probably "
+            "still in progress, so re-run once it settles",
+        )
+
     return Artifact(
         path=path,
         sha256=digest,
         pages=pages,
         chars_per_page=int(sum(len(text) for text in body) / pages),
         text=normalise(" ".join([outline, *body])),
-        front=normalise(" ".join(body[:FRONT_PAGES])),
+        front=normalise(" ".join(body)[:FRONT_CHARS]),
     )
 
 
@@ -440,14 +484,30 @@ def _edition_claims(artifact: Artifact, book: BookTruth) -> tuple[list[str], lis
     stated_years = {int(year) for year in _COPYRIGHT_YEAR.findall(artifact.front)}
     expected_year = int(book.year) if book.year.isdigit() else None
     if expected_year and stated_years:
+        listed = ", ".join(str(year) for year in sorted(stated_years))
         nearest = min(stated_years, key=lambda year: abs(year - expected_year))
         if abs(nearest - expected_year) <= YEAR_TOLERANCE:
             notes.append(f"copyright {nearest} against an expected {expected_year}")
-        else:
+        elif min(stated_years) < expected_year - YEAR_TOLERANCE:
+            # Only this direction is proof. A copy cannot predate the edition it
+            # claims to be, so a copyright earlier than the one truth expects means
+            # the file is an earlier edition — which is how a first-edition POODR
+            # was caught after matching 100% of the second edition's chapter
+            # titles.
             problems.append(
-                f"the file's copyright is {', '.join(str(y) for y in sorted(stated_years))} and "
-                f"truth expects {expected_year} — that is more than a reprint apart, so this is "
-                "probably a different edition"
+                f"the file's copyright is {listed} and truth expects {expected_year} — a copy "
+                "cannot predate the edition it claims to be, so this is an earlier edition"
+            )
+        else:
+            # Later is not proof of anything. Reprints, ebook re-publications and
+            # a vendor's own conversion banner all postdate the text: Code
+            # Complete 2e (2004) carries an O'Reilly "Copyright 2009" upsell in
+            # its front matter and is unambiguously the second edition, there
+            # being no third. A contradicting edition *ordinal* is the check that
+            # catches a genuinely later edition, and it runs above.
+            notes.append(
+                f"copyright {listed} postdates the expected {expected_year} — usually a reprint "
+                "or an ebook re-publication rather than a later edition, but worth a glance"
             )
     elif expected_year:
         notes.append(f"year {expected_year} not stated in the file — confirm by hand")
@@ -489,11 +549,29 @@ def catalogue(
                 *problems,
                 _undecided(match),
             )
+        # Only for a file that will actually be renamed. Suggesting the canonical
+        # name for a file with a problem is advice that must not be taken: the
+        # name asserts which book and edition the bytes are, so putting it on an
+        # unverified file makes the filename lie, and the next reader sees a
+        # canonically-named file and assumes it was checked. The original name
+        # staying put is the visible signal that something is wrong with it.
         rename = None
         if book is not None and book.source_file:
-            expected = Path(book.source_file).name
-            if path.name != expected:
-                rename = expected
+            expected = Path(book.source_file)
+            if expected.suffix.lower() != path.suffix.lower():
+                # Not renamed and not pinned. booksmart's parser chain dispatches
+                # on the suffix, so calling an EPUB `.pdf` would hand it to the
+                # PDF parser; and a pin whose source.file names a path that does
+                # not exist is a pin pointing at nothing. Truth has to say which
+                # format it expects, and that is an edit for a human.
+                problems = (
+                    *problems,
+                    f"this file is {path.suffix.lower()} and book.yaml expects "
+                    f"{expected.suffix.lower()}; update source.file to match the format, "
+                    "or supply the format truth already names",
+                )
+            elif not problems and path.name != expected.name:
+                rename = expected.name
         entries.append(
             Catalogued(
                 artifact=artifact,

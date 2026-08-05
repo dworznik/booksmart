@@ -20,9 +20,11 @@ from booksmart_bench.sources import (
     Artifact,
     catalogue,
     identify,
+    fingerprint,
     normalise,
     parse_ordinal,
     pin,
+    read_artifact,
     repin_line,
 )
 from booksmart_bench.truth import load_truth
@@ -197,7 +199,16 @@ class TestAudit:
     def test_an_epub_is_accepted_with_a_note_about_its_parser_chain(
         self, tmp_path: Path, write_truth: Callable[..., Path]
     ) -> None:
-        assets = write_truth("a-book")
+        # book.yaml has to name the format it expects, or the suffix guard fires
+        # instead — which is a different test, below.
+        assets = write_truth(
+            "a-book",
+            book={
+                "title": "Placeholder Book",
+                "area": "an-area",
+                "source": {"file": "sources/book.epub", "sha256": "TBD"},
+            },
+        )
         (path,) = drop(assets, "book.epub")
         artifact = make_artifact(path, text="First Chapter")
 
@@ -300,11 +311,13 @@ class TestEditionClaims:
 
         assert entry.ok
 
-    def test_a_contradicting_copyright_year_is_a_problem(
+    def test_a_copyright_earlier_than_expected_is_a_problem(
         self, write_truth: Callable[..., Path]
     ) -> None:
         """Some books never print an edition statement, and then the copyright
-        year is the only thing separating two editions."""
+        year is the only thing separating two editions. A copy cannot predate the
+        edition it claims to be — this is how a first-edition POODR was caught
+        after matching 100% of the second edition's chapter titles."""
         assets = write_truth(
             "a-book",
             book={
@@ -323,6 +336,33 @@ class TestEditionClaims:
 
         assert not entry.ok
         assert "2013" in " ".join(entry.problems)
+
+    def test_a_copyright_later_than_expected_is_only_a_note(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        """Reprints, ebook re-publications and a vendor's own conversion banner
+        all postdate the text. Code Complete 2e (2004) carries an O'Reilly
+        "Copyright 2009" upsell in its front matter and is unambiguously the
+        second edition, there being no third — blocking on that stopped a
+        correctly pinned book from being pinned at all."""
+        assets = write_truth(
+            "a-book",
+            book={
+                "title": "Placeholder Book",
+                "area": "an-area",
+                "publication_year": 2004,
+                "source": {"file": "sources/a.pdf", "sha256": "TBD"},
+            },
+        )
+        (path,) = drop(assets, "a.pdf")
+        artifact = make_artifact(
+            path, text="Copyright 2009 First Chapter Widgets And Sprockets Grommets"
+        )
+
+        entry = catalogue(assets, load_truth(assets), read=lambda _: artifact).entries[0]
+
+        assert entry.ok
+        assert "2009" in " ".join(entry.notes)
 
 
 class TestOrdinals:
@@ -448,6 +488,59 @@ class TestCatalogue:
 
         assert result.entries[0].rename_to == "placeholder.pdf"
 
+    def test_a_file_with_a_problem_is_not_told_to_rename_itself(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        """The canonical name asserts which book and edition the bytes are, so a
+        file that failed a check must not be advised into one — `--pin` would
+        refuse to do it, and a reader seeing the canonical name later would
+        assume it had been verified. The original name is the signal."""
+        assets = write_truth(
+            "a-book",
+            book={
+                "title": "Placeholder Book",
+                "area": "an-area",
+                "publication_year": 2019,
+                "source": {"file": "sources/placeholder.pdf", "sha256": "TBD"},
+            },
+        )
+        (path,) = drop(assets, "Some Book From The Internet.pdf")
+        artifact = make_artifact(
+            path, text="Copyright 2013 First Chapter Widgets And Sprockets Grommets"
+        )
+
+        entry = catalogue(assets, load_truth(assets), read=lambda _: artifact).entries[0]
+
+        assert not entry.ok
+        assert entry.rename_to is None
+
+    def test_a_format_truth_does_not_expect_is_a_problem_not_a_rename(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        """booksmart's parser chain dispatches on the suffix, so renaming an
+        EPUB to `.pdf` because book.yaml says so would hand it to the PDF
+        parser — and a pin whose source.file names a path that does not exist
+        points at nothing. Which format truth expects is a human's edit."""
+        assets = write_truth(
+            "a-book",
+            book={
+                "title": "Placeholder Book",
+                "area": "an-area",
+                "source": {"file": "sources/placeholder.pdf", "sha256": "TBD"},
+            },
+        )
+        (path,) = drop(assets, "placeholder.epub")
+        artifact = make_artifact(
+            path, text="First Chapter Widgets And Sprockets Grommets"
+        )
+
+        entry = catalogue(assets, load_truth(assets), read=lambda _: artifact).entries[0]
+
+        assert not entry.ok
+        assert entry.rename_to is None
+        assert ".epub" in " ".join(entry.problems)
+        assert ".pdf" in " ".join(entry.problems)
+
     def test_a_non_book_file_in_sources_is_ignored(
         self, write_truth: Callable[..., Path]
     ) -> None:
@@ -533,8 +626,6 @@ class TestReadArtifact:
     """The one part that has to meet a real file."""
 
     def test_it_reads_pages_text_and_a_hash_from_a_real_pdf(self, tmp_path: Path) -> None:
-        from booksmart_bench.sources import read_artifact
-
         path = write_pdf(tmp_path / "book.pdf", ["First Chapter", "Second Chapter"])
 
         artifact = read_artifact(path)
@@ -548,8 +639,6 @@ class TestReadArtifact:
     def test_a_pdf_with_no_text_layer_reports_its_character_count(
         self, tmp_path: Path
     ) -> None:
-        from booksmart_bench.sources import read_artifact
-
         doc = pymupdf.open()
         doc.new_page()
         doc.new_page()
@@ -561,10 +650,58 @@ class TestReadArtifact:
         assert artifact.pages == 2
         assert artifact.chars_per_page < MIN_CHARS_PER_PAGE
 
+    def test_a_real_epub_is_read_like_any_other_book(self, tmp_path: Path) -> None:
+        """EPUB is a supported format here and a single-parser chain in the
+        pipeline, so it is worth proving end to end rather than trusting a
+        format list. Built by hand because there is no EPUB writer to hand."""
+        import zipfile
+
+        path = tmp_path / "book.epub"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+            archive.writestr(
+                "META-INF/container.xml",
+                '<?xml version="1.0"?><container version="1.0" '
+                'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
+                '<rootfile full-path="content.opf" '
+                'media-type="application/oebps-package+xml"/></rootfiles></container>',
+            )
+            archive.writestr(
+                "content.opf",
+                '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" '
+                'version="3.0" unique-identifier="id"><metadata '
+                'xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>T</dc:title>'
+                '<dc:identifier id="id">x</dc:identifier><dc:language>en</dc:language>'
+                '</metadata><manifest><item id="c1" href="ch1.xhtml" '
+                'media-type="application/xhtml+xml"/></manifest>'
+                '<spine><itemref idref="c1"/></spine></package>',
+            )
+            archive.writestr(
+                "ch1.xhtml",
+                '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+                f"<body><h1>Managing Dependencies</h1><p>{FILLER}</p></body></html>",
+            )
+
+        artifact = read_artifact(path)
+
+        assert artifact.unreadable is None
+        assert artifact.pages >= 1
+        assert "managing dependencies" in artifact.text
+
+    def test_a_file_still_being_copied_says_so_rather_than_guessing(
+        self, tmp_path: Path
+    ) -> None:
+        """A handover is fifteen large files being copied in, so reading one
+        mid-write is routine — and it yields a confident, wrong verdict. The
+        fingerprint either side of the read is what notices."""
+        path = write_pdf(tmp_path / "growing.pdf", ["First Chapter"])
+        before = fingerprint(path)
+        path.write_bytes(path.read_bytes() + b"%%appended")
+
+        assert fingerprint(path) != before
+
     def test_a_file_that_will_not_open_is_reported_not_raised(self, tmp_path: Path) -> None:
         """One unreadable file must not stop the other thirteen being catalogued."""
-        from booksmart_bench.sources import read_artifact
-
         path = tmp_path / "truncated.pdf"
         path.write_bytes(b"%PDF-1.4 and then nothing useful")
 
