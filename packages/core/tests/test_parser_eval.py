@@ -198,6 +198,50 @@ class TestFirstPages:
         assert "Chapter 4" in text  # 0-based start=3 is the fourth page
 
 
+    def test_an_epub_can_be_sliced_too(self, tmp_path: Path) -> None:
+        """select() is PDF-only, so an EPUB slice goes through a whole-document
+        conversion first. Without this, the first EPUB anyone pointed the eval
+        at would crash inside the harness rather than produce a comparison."""
+        import zipfile
+
+        source = tmp_path / "book.epub"
+        with zipfile.ZipFile(source, "w") as z:
+            z.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+            z.writestr(
+                "META-INF/container.xml",
+                '<?xml version="1.0"?><container version="1.0" '
+                'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
+                '<rootfile full-path="content.opf" '
+                'media-type="application/oebps-package+xml"/></rootfiles></container>',
+            )
+            z.writestr(
+                "content.opf",
+                '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" '
+                'version="3.0" unique-identifier="id"><metadata '
+                'xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>T</dc:title>'
+                '<dc:identifier id="id">x</dc:identifier><dc:language>en</dc:language>'
+                '</metadata><manifest><item id="c1" href="ch1.xhtml" '
+                'media-type="application/xhtml+xml"/></manifest>'
+                '<spine><itemref idref="c1"/></spine></package>',
+            )
+            z.writestr(
+                "ch1.xhtml",
+                '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><body>'
+                "<h1>Sliceable</h1>" + "<p>prose to fill pages. </p>" * 400 + "</body></html>",
+            )
+
+        sliced = parser_eval.first_pages(source, 2, tmp_path / "slice.epub")
+
+        assert sliced.suffix == ".pdf"  # rendered form; select is PDF-only
+        assert parser_eval.page_count(sliced) == 2
+        import pymupdf
+
+        doc = pymupdf.open(sliced)
+        text = doc[0].get_text()
+        doc.close()
+        assert "Sliceable" in text
+
+
 class TestRealEval:
     """The comparison. Needs a real document, and marker installed to be
     interesting."""

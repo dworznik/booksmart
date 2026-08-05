@@ -185,6 +185,16 @@ def first_pages(path: Path, count: int, destination: Path, *, start: int = 0) ->
     comparison of code handling into a comparison of front matter.
     """
     doc = pymupdf.open(path)  # type: ignore[no-untyped-call]
+    if not doc.is_pdf:
+        # select() is PDF-only, and a *ranged* convert_to_pdf fails outright on
+        # reflowed documents — so convert the whole book and slice the result.
+        # The comparison is unaffected: MuPDF's rendered layout is what every
+        # parser here reads anyway, and span fonts keep their monospace flags
+        # through the conversion (verified against a real EPUB).
+        rendered = doc.convert_to_pdf()  # type: ignore[no-untyped-call]
+        doc.close()
+        doc = pymupdf.open("pdf", rendered)  # type: ignore[no-untyped-call]
+        destination = destination.with_suffix(".pdf")
     try:
         first = min(start, max(doc.page_count - 1, 0))
         doc.select(range(first, min(first + count, doc.page_count)))
@@ -222,8 +232,9 @@ def compare(
         if parser.name not in wanted or "pdf" not in parser.supported_formats:
             continue
         started = time.perf_counter()
+        file_format = "epub" if path.suffix.lower() == ".epub" else "pdf"
         try:
-            markdown = ParserChain([parser]).extract(path, "pdf", lambda _: None).markdown
+            markdown = ParserChain([parser]).extract(path, file_format, lambda _: None).markdown
         except Exception as exc:  # noqa: BLE001 - an unavailable parser is a result
             results.append(
                 Metrics(
