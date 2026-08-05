@@ -48,6 +48,10 @@ EVAL_DUMP = os.environ.get("BOOKSMART_PARSER_EVAL_DUMP", "")
 # First page of the slice (0-based). Books keep their code deep in the text —
 # the front of one corpus book yielded two code lines in twenty pages.
 EVAL_START = int(os.environ.get("BOOKSMART_PARSER_EVAL_START", "0"))
+# Comma-separated parser names to compare; unset means every available one.
+# A format experiment (PDF vs EPUB through the same parser) needs only pymupdf,
+# and marker costs twenty minutes a run once it is importable in the venv.
+EVAL_PARSERS = os.environ.get("BOOKSMART_PARSER_EVAL_PARSERS", "")
 
 
 class TestMetrics:
@@ -267,7 +271,8 @@ class TestRealEval:
             if EVAL_DUMP
             else None
         )
-        results = parser_eval.compare(path, dump_to=dump)
+        wanted = [p.strip() for p in EVAL_PARSERS.split(",") if p.strip()] or None
+        results = parser_eval.compare(path, parsers=wanted, dump_to=dump)
 
         sliced = parser_eval.page_count(path)
         scope = (
