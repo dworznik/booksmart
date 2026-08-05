@@ -170,17 +170,24 @@ def build_probe_pdf(path: Path, *, pages: int = 3) -> Path:
     return path
 
 
-def first_pages(path: Path, count: int, destination: Path) -> Path:
+def first_pages(path: Path, count: int, destination: Path, *, start: int = 0) -> Path:
     """A copy of the first ``count`` pages, for comparing parsers affordably.
 
     marker is an ML pipeline and orders of magnitude slower than pymupdf4llm, so
     running both over a whole manual is a poor first move — long enough that it
     is hard to tell a slow parse from a hung one. Both parsers see the identical
     truncated document, so the comparison stays fair; only its scope narrows.
+
+    ``start`` exists because of where books keep their code. The first twenty
+    pages of a technical manual are already full of listings; the first twenty
+    pages of a book are cover, contents and preface — a slice from the front of
+    one corpus book contained two lines of code, which silently turned a
+    comparison of code handling into a comparison of front matter.
     """
     doc = pymupdf.open(path)  # type: ignore[no-untyped-call]
     try:
-        doc.select(range(min(count, doc.page_count)))
+        first = min(start, max(doc.page_count - 1, 0))
+        doc.select(range(first, min(first + count, doc.page_count)))
         # Repair while saving, unconditionally. Real books arrive with syntax
         # MuPDF tolerates on read and refuses to re-serialize — one corpus book
         # has a dict entry whose key is not a name, and a plain save dies on it

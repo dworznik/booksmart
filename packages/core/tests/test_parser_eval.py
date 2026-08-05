@@ -45,6 +45,9 @@ EVAL_PAGES = int(os.environ.get("BOOKSMART_PARSER_EVAL_PAGES", "20"))
 # Where to write each parser's markdown, so a twenty-minute marker run leaves
 # something a human can diff. Unset, nothing is written.
 EVAL_DUMP = os.environ.get("BOOKSMART_PARSER_EVAL_DUMP", "")
+# First page of the slice (0-based). Books keep their code deep in the text —
+# the front of one corpus book yielded two code lines in twenty pages.
+EVAL_START = int(os.environ.get("BOOKSMART_PARSER_EVAL_START", "0"))
 
 
 class TestMetrics:
@@ -178,6 +181,22 @@ class TestFirstPages:
 
         assert parser_eval.page_count(sliced) == 3
 
+    def test_a_slice_can_start_mid_document(self, tmp_path: Path) -> None:
+        """Books keep their code deep in the text; a slice from page one of a
+        corpus book held two code lines in twenty pages, which quietly turned a
+        code-handling comparison into a front-matter comparison."""
+        source = parser_eval.build_probe_pdf(tmp_path / "whole.pdf", pages=6)
+
+        sliced = parser_eval.first_pages(source, 2, tmp_path / "slice.pdf", start=3)
+
+        assert parser_eval.page_count(sliced) == 2
+        import pymupdf
+
+        doc = pymupdf.open(sliced)
+        text = doc[0].get_text()
+        doc.close()
+        assert "Chapter 4" in text  # 0-based start=3 is the fourth page
+
 
 class TestRealEval:
     """The comparison. Needs a real document, and marker installed to be
@@ -190,12 +209,17 @@ class TestRealEval:
 
         path = source
         if EVAL_PAGES:
-            path = parser_eval.first_pages(source, EVAL_PAGES, tmp_path / source.name)
+            path = parser_eval.first_pages(
+                source, EVAL_PAGES, tmp_path / source.name, start=EVAL_START
+            )
 
         dump = Path(EVAL_DUMP).expanduser() if EVAL_DUMP else None
         results = parser_eval.compare(path, dump_to=dump)
 
-        scope = f"first {parser_eval.page_count(path)}" if EVAL_PAGES else "all"
+        sliced = parser_eval.page_count(path)
+        scope = (
+            f"pages {EVAL_START + 1}-{EVAL_START + sliced}" if EVAL_PAGES else "all"
+        )
         print(f"\n{source.name} — {scope} of {parser_eval.page_count(source)} pages")
         print(parser_eval.render(results))
         if not parser_eval.marker_is_installed():
