@@ -371,7 +371,10 @@ class TestOrdinals:
 
     @pytest.mark.parametrize(
         ("text", "expected"),
-        [("1st", 1), ("3rd", 3), ("7th", 7), ("12th", 12), ("third", 3), ("10", 10)],
+        [
+            ("1st", 1), ("3rd", 3), ("7th", 7), ("12th", 12), ("third", 3),
+            ("10", 10), ("edition 10", 10), ("100th", 100), ("twelfth", 12),
+        ],
     )
     def test_it_reads_the_shapes_book_yaml_and_title_pages_use(
         self, text: str, expected: int
@@ -381,6 +384,32 @@ class TestOrdinals:
     @pytest.mark.parametrize("text", ["", "revised", "anniversary"])
     def test_it_declines_what_is_not_an_ordinal(self, text: str) -> None:
         assert parse_ordinal(text) is None
+
+    def test_a_year_beside_the_word_edition_is_not_an_edition_claim(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        """Copyright blocks put a year next to the word. Reading "edition 2019"
+        as edition 2019 would invent a claim the book never made, and then
+        contradict truth with it."""
+        assets = write_truth(
+            "a-book",
+            book={
+                "title": "Placeholder Book",
+                "area": "an-area",
+                "edition": "2nd",
+                "source": {"file": "sources/a.pdf", "sha256": "TBD"},
+            },
+        )
+        (path,) = drop(assets, "a.pdf")
+        artifact = make_artifact(
+            path,
+            text="Placeholder Book Second Edition 2019 Pearson Education First Chapter "
+            "Widgets And Sprockets Grommets",
+        )
+
+        entry = catalogue(assets, load_truth(assets), read=lambda _: artifact).entries[0]
+
+        assert entry.ok, entry.problems
 
     def test_an_edition_past_the_sixth_is_still_checked(
         self, write_truth: Callable[..., Path]

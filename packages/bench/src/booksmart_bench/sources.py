@@ -88,11 +88,17 @@ _ORDINAL_WORDS = {
     "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10,
     "eleventh": 11, "twelfth": 12,
 }
+# Three digits, not two and not unbounded. Two capped a book at 99 editions,
+# which contradicts the point above; unbounded would let `edition 2019 Pearson`
+# in a copyright block read as edition 2019, inventing a claim the book never
+# made out of the year beside it.
 _EDITION_CLAIM = re.compile(
-    r"\b(?:(" + "|".join(_ORDINAL_WORDS) + r")|(\d{1,2})(?:st|nd|rd|th))\s+edition\b"
-    r"|\bedition\s+(\d{1,2})\b"
+    r"\b(?:(" + "|".join(_ORDINAL_WORDS) + r")|(\d{1,3})(?:st|nd|rd|th))\s+edition\b"
+    r"|\bedition\s+(\d{1,3})\b"
 )
-_ORDINAL_DIGITS = re.compile(r"^(\d{1,2})(?:st|nd|rd|th)?$")
+# No cap reading book.yaml's own field: there is no year sitting next to it to be
+# confused with, and the value is ours to write.
+_ORDINAL_DIGITS = re.compile(r"^(\d+)(?:st|nd|rd|th)?$")
 _COPYRIGHT_YEAR = re.compile(r"\bcopyright\b[^a-z0-9]{0,12}((?:19|20)\d{2})")
 
 # An edition claim counts only this close to the book's own title. Front matter
@@ -397,7 +403,12 @@ def parse_ordinal(text: str) -> int | None:
     treating it as "no edition stated", so a `book.yaml` this cannot parse is
     visible instead of quietly disabling the check.
     """
-    token = normalise(text).split(" ")[0] if text else ""
+    tokens = normalise(text).split(" ") if text else []
+    # "edition 10" as readily as "10th" — the field is hand-written, and a form
+    # this cannot read disables the check rather than failing loudly.
+    if tokens and tokens[0] == "edition":
+        tokens = tokens[1:]
+    token = tokens[0] if tokens else ""
     if not token:
         return None
     if token in _ORDINAL_WORDS:
