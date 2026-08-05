@@ -156,9 +156,31 @@ $ export TORCH_DEVICE=mps      # Metal; falls back to cpu if unavailable
 On an Intel Mac, leave it unset or use `cpu`, and expect it to be slow enough
 that you may prefer to run the comparison on fewer pages.
 
-If you go on to use marker's VLM/LLM path (you should not — see below), its
-README describes an inference server via `brew install llama.cpp` on Apple
-Silicon. The plain PDF path used here does not need it.
+### 3a. Install llama.cpp, or marker will hang
+
+**This is not optional on Apple Silicon, and getting it wrong looks like a
+hang rather than an error.**
+
+marker 2.x performs OCR by default, and Surya auto-spawns a VLM inference server
+on first use. That server needs `vllm` on an NVIDIA GPU or the `llama-server`
+binary from llama.cpp on CPU and Apple Silicon:
+
+```console
+$ brew install llama.cpp
+```
+
+Without it the first run downloads a few hundred megabytes of Surya weights,
+tries to start the server, and then sits there. No error, no progress, nothing
+in the log — observed on a first attempt, where `~/.cache/huggingface` stopped
+growing at 232 MB and stayed there.
+
+marker offers `--disable_ocr` for born-digital PDFs, which skips the server
+entirely. **booksmart cannot pass it**: `MarkerParser.parse` constructs
+`PdfConverter(artifact_dict=create_model_dict())` with no configuration hook, so
+there is no way through the parser chain to turn OCR off. Adopting marker
+therefore means adopting the inference server too, which is worth weighing in
+booksmart#80 — it is a system binary, not a Python dependency, so `uv` cannot
+carry it any more than it can carry tesseract.
 
 ### 4. Keep LLM mode off
 
