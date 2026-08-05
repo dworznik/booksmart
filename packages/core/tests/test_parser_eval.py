@@ -155,6 +155,30 @@ class TestChainSelection:
         print(f"\nprobe document via {parser_eval.available_parsers()}:\n{metrics.as_row()}")
 
 
+class TestFirstPages:
+    def test_it_truncates_and_keeps_the_text(self, tmp_path: Path) -> None:
+        source = parser_eval.build_probe_pdf(tmp_path / "whole.pdf", pages=5)
+
+        sliced = parser_eval.first_pages(source, 2, tmp_path / "slice.pdf")
+
+        assert parser_eval.page_count(sliced) == 2
+        import pymupdf
+
+        doc = pymupdf.open(sliced)
+        text = doc[0].get_text()
+        doc.close()
+        assert "Extracting Text" in text
+
+    def test_asking_for_more_pages_than_exist_is_the_whole_document(
+        self, tmp_path: Path
+    ) -> None:
+        source = parser_eval.build_probe_pdf(tmp_path / "whole.pdf", pages=3)
+
+        sliced = parser_eval.first_pages(source, 999, tmp_path / "slice.pdf")
+
+        assert parser_eval.page_count(sliced) == 3
+
+
 class TestRealEval:
     """The comparison. Needs a real document, and marker installed to be
     interesting."""

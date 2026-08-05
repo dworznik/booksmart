@@ -181,7 +181,14 @@ def first_pages(path: Path, count: int, destination: Path) -> Path:
     doc = pymupdf.open(path)  # type: ignore[no-untyped-call]
     try:
         doc.select(range(min(count, doc.page_count)))
-        doc.save(destination)
+        # Repair while saving, unconditionally. Real books arrive with syntax
+        # MuPDF tolerates on read and refuses to re-serialize — one corpus book
+        # has a dict entry whose key is not a name, and a plain save dies on it
+        # with FzErrorSyntax: invalid key in dict. Both parsers see the same
+        # repaired file, so the comparison is unaffected; and unlike rebuilding
+        # via insert_pdf, this keeps the outline, which pymupdf4llm reads for
+        # headings.
+        doc.save(destination, garbage=4, clean=True)
     finally:
         doc.close()
     return destination
