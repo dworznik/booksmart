@@ -30,8 +30,10 @@ jobs:
         # No BOOKSMART_TEST_DATABASE_URL -> conftest defaults to a SQLite file.
         run: uv run pytest -q
 
-  # The same suite against Postgres, so a Postgres-only regression (or a lost
-  # pg-ism) cannot land silently.
+  # The same suite against Postgres + a Qdrant server — the server consumer's
+  # shape — so a Postgres-only regression (or a lost pg-ism) cannot land
+  # silently, and local-vs-server Qdrant search parity (issue #33) is actually
+  # executed rather than assumed.
   test-postgres:
     runs-on: ubuntu-latest
 
@@ -50,8 +52,21 @@ jobs:
           --health-timeout 3s
           --health-retries 30
 
+      # Pinned to the locked qdrant-client minor: local mode's behaviour is the
+      # client's version, so parity is only meaningful against its server.
+      qdrant:
+        image: qdrant/qdrant:v1.18.0
+        ports:
+          - 6333:6333
+        options: >-
+          --health-cmd "bash -c ':> /dev/tcp/127.0.0.1/6333'"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+
     env:
       BOOKSMART_TEST_DATABASE_URL: postgresql+psycopg://booksmart:booksmart@localhost:5432/booksmart_test
+      BOOKSMART_TEST_QDRANT_URL: http://localhost:6333
 
     steps:
       - uses: actions/checkout@v4
