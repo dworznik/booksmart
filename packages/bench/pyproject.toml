@@ -18,6 +18,10 @@ dependencies = [
     "typer>=0.12.0",
     "rich>=13.7.0",
     "pyyaml>=6.0",
+    # Declared rather than leaned on: core pulls pymupdf in through pymupdf4llm,
+    # but `sources` opens book files itself and a direct import wants a direct
+    # dependency.
+    "pymupdf>=1.24",
 ]
 
 [project.scripts]

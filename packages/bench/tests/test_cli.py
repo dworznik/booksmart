@@ -38,8 +38,16 @@ class TestSurface:
         for verb in VERB_NAMES:
             assert verb in result.stdout
 
-    def test_the_four_verbs_are_the_artefact_boundaries(self) -> None:
-        assert VERB_NAMES == ["ingest", "report", "run", "score"]
+    def test_the_verbs_are_the_artefact_boundaries_plus_sources(self) -> None:
+        """Four verbs cut along the three-artefact split, and one does not.
+
+        `sources` is not an artefact boundary — it checks the files truth is
+        authored against before anything is spent on them. It is a verb rather
+        than a script because pinning a hash by hand is exactly the error the
+        pin exists to catch. Keeping it named here means a fifth boundary-shaped
+        verb cannot arrive unnoticed.
+        """
+        assert VERB_NAMES == ["ingest", "report", "run", "score", "sources"]
 
     @pytest.mark.parametrize("verb", VERB_NAMES)
     def test_every_verb_takes_assets(
