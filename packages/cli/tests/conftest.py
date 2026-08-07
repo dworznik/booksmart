@@ -29,12 +29,17 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     monkeypatch.setenv("BOOKSMART_HOME", str(home_dir))
     monkeypatch.setenv("BOOKSMART_LLM_PROVIDER", "fake")
     monkeypatch.setenv("BOOKSMART_EMBEDDING_PROVIDER", "fake")
+    # Fake here too, for a reason the other two do not have: the real sparse
+    # provider is local, but constructing it downloads the BM25 model, so the
+    # suite would otherwise need a network and a warm cache to run at all.
+    monkeypatch.setenv("BOOKSMART_SPARSE_PROVIDER", "fake")
     # Make sure no stray server/db config or ambient API key (BOOKSMART_-prefixed
     # or the vendors' conventional variables) leaks in from the developer's env.
     for leaked in (
         "BOOKSMART_DATABASE_URL",
         "BOOKSMART_STORAGE_ROOT",
         "BOOKSMART_QDRANT_URL",
+        "BOOKSMART_SPARSE_MODEL",
         "BOOKSMART_ANTHROPIC_API_KEY",
         "BOOKSMART_OPENAI_API_KEY",
         "BOOKSMART_GEMINI_API_KEY",

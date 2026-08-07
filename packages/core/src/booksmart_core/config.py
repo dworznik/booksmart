@@ -31,6 +31,13 @@ class Settings(BaseModel):
     llm_reasoning_effort: str | None = None
     embedding_provider: str = "openai"  # Anthropic has no embeddings API
     embedding_model: str | None = None
+    # The sparse (lexical) half of hybrid retrieval. Computed client-side, so
+    # unlike the dense embedder this needs no vendor and no key — "fastembed"
+    # runs BM25 locally from core's optional [sparse] extra. The BM25 parameters
+    # themselves are deliberately not settings: they are read back off the model
+    # and locked into the collection, so drift is caught rather than configured.
+    sparse_provider: str = "fastembed"
+    sparse_model: str | None = None  # None -> the selected provider's default model
     # API keys. Required (non-None) by the matching provider at construction;
     # there is no environment fallback — resolving keys is the caller's job.
     anthropic_api_key: str | None = None

@@ -30,9 +30,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from booksmart_core import MIGRATIONS_PATH
 from booksmart_core.config import Settings
 from booksmart_core.extraction import EXTRACTION_SYSTEM_PROMPT
+from booksmart_core.fakes import FakeSparseEmbeddingProvider
 from booksmart_core.llm import EmbeddingResponse, LLMResponse
 from booksmart_core.models import Base, Book, BookProfile, Chapter, KnowledgeObject, Run
 from booksmart_core.runner import execute_run
+from booksmart_core.sparse import SparseVector
 from booksmart_core.storage import BookStorage, hash_stream
 from booksmart_core.summaries import SUMMARY_SYSTEM_PROMPT
 from booksmart_core.vectors import VectorStore
@@ -385,6 +387,29 @@ def stub_embedder() -> StubEmbeddingProvider:
     return StubEmbeddingProvider()
 
 
+class StubSparseProvider(FakeSparseEmbeddingProvider):
+    """The fake BM25 stand-in, recording every batch it was asked to embed.
+
+    Subclasses the fake rather than reimplementing it: the term-hashing is the
+    part tests rely on for lexical overlap, and the real provider would download
+    a model. Its `recipe` is what the collection locks against, so tests that
+    exercise the sparse lock spell it from here.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(model="stub-sparse-1")
+        self.batches: list[list[str]] = []
+
+    def embed_documents(self, texts: list[str]) -> list[SparseVector]:
+        self.batches.append(list(texts))
+        return super().embed_documents(texts)
+
+
+@pytest.fixture()
+def stub_sparse() -> StubSparseProvider:
+    return StubSparseProvider()
+
+
 @pytest.fixture()
 def vector_store() -> VectorStore:
     """A fresh in-memory Qdrant per test."""
@@ -396,14 +421,18 @@ def _never_call_real_llm(
     monkeypatch: pytest.MonkeyPatch,
     stub_llm: StubLLMProvider,
     stub_embedder: StubEmbeddingProvider,
+    stub_sparse: StubSparseProvider,
     vector_store: VectorStore,
 ) -> None:
     """The runner builds real providers when none are injected; tests never do that.
 
-    The same instances as the `stub_llm` / `stub_embedder` / `vector_store`
-    fixtures are installed, so tests can inspect prompts, embedded texts, and
-    stored vectors without passing the stubs explicitly.
+    The same instances as the `stub_llm` / `stub_embedder` / `stub_sparse` /
+    `vector_store` fixtures are installed, so tests can inspect prompts, embedded
+    texts, and stored vectors without passing the stubs explicitly. The sparse
+    seam matters here beyond isolation: the real provider downloads its model on
+    construction, so an unstubbed run would reach the network.
     """
     monkeypatch.setattr("booksmart_core.runner.build_default_llm", lambda: stub_llm)
     monkeypatch.setattr("booksmart_core.runner.build_default_embedder", lambda: stub_embedder)
+    monkeypatch.setattr("booksmart_core.runner.build_default_sparse_embedder", lambda: stub_sparse)
     monkeypatch.setattr("booksmart_core.runner.build_default_vector_store", lambda: vector_store)

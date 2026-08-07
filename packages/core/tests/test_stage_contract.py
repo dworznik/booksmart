@@ -35,7 +35,7 @@ from booksmart_core.stages import (
 from booksmart_core.storage import BookStorage
 from booksmart_core.vectors import VectorStore
 
-from .conftest import StubEmbeddingProvider, StubLLMProvider
+from .conftest import StubEmbeddingProvider, StubLLMProvider, StubSparseProvider
 from .test_embeddings_api import count_book_points, prime_summaries
 from .test_knowledge_api import prime_extraction
 from .test_profile_api import register_book_with_hints
@@ -47,6 +47,7 @@ def _drive_per_stage_session(
     book_id: uuid.UUID,
     stub_llm: StubLLMProvider,
     stub_embedder: StubEmbeddingProvider,
+    stub_sparse: StubSparseProvider,
     vector_store: VectorStore,
 ) -> list[object]:
     """Run the full pipeline as a durable-execution Runner would: one fresh
@@ -66,7 +67,13 @@ def _drive_per_stage_session(
         reports.append(run_summaries(session, book_id, llm=stub_llm, storage=storage))
     with session_factory() as session:
         reports.append(
-            run_embeddings(session, book_id, embedder=stub_embedder, vector_store=vector_store)
+            run_embeddings(
+                session,
+                book_id,
+                embedder=stub_embedder,
+                sparse_embedder=stub_sparse,
+                vector_store=vector_store,
+            )
         )
     return reports
 
@@ -79,6 +86,7 @@ class TestPerStageSessionContract:
         settings: Settings,
         stub_llm: StubLLMProvider,
         stub_embedder: StubEmbeddingProvider,
+        stub_sparse: StubSparseProvider,
         vector_store: VectorStore,
     ) -> None:
         book_id = uuid.UUID(register_book_with_hints(session_factory, storage))
@@ -92,7 +100,7 @@ class TestPerStageSessionContract:
             run_id = run.id
 
         reports = _drive_per_stage_session(
-            session_factory, settings, book_id, stub_llm, stub_embedder, vector_store
+            session_factory, settings, book_id, stub_llm, stub_embedder, stub_sparse, vector_store
         )
 
         with session_factory() as session:
@@ -120,6 +128,7 @@ class TestPerStageSessionContract:
         settings: Settings,
         stub_llm: StubLLMProvider,
         stub_embedder: StubEmbeddingProvider,
+        stub_sparse: StubSparseProvider,
         vector_store: VectorStore,
     ) -> None:
         book_id = uuid.UUID(register_book_with_hints(session_factory, storage))
@@ -127,7 +136,7 @@ class TestPerStageSessionContract:
         prime_summaries(stub_llm)
 
         _drive_per_stage_session(
-            session_factory, settings, book_id, stub_llm, stub_embedder, vector_store
+            session_factory, settings, book_id, stub_llm, stub_embedder, stub_sparse, vector_store
         )
 
         def snapshot() -> tuple[list[str], list[str], int]:
@@ -179,6 +188,7 @@ class TestStagesAreRunBlind:
         settings: Settings,
         stub_llm: StubLLMProvider,
         stub_embedder: StubEmbeddingProvider,
+        stub_sparse: StubSparseProvider,
         vector_store: VectorStore,
     ) -> None:
         book_id = uuid.UUID(register_book_with_hints(session_factory, storage))
@@ -186,7 +196,7 @@ class TestStagesAreRunBlind:
         prime_summaries(stub_llm)
 
         _drive_per_stage_session(
-            session_factory, settings, book_id, stub_llm, stub_embedder, vector_store
+            session_factory, settings, book_id, stub_llm, stub_embedder, stub_sparse, vector_store
         )
 
         with session_factory() as session:

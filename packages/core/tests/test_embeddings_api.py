@@ -9,15 +9,23 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from booksmart_core.config import Settings
+from booksmart_core.fakes import FakeSparseEmbeddingProvider
 from booksmart_core.llm import EmbeddingProvider, EmbeddingResponse
 from booksmart_core.models import Chapter, KnowledgeObject, Section
 from booksmart_core.runner import execute_run
+from booksmart_core.sparse import SparseEmbeddingProvider
 from booksmart_core.stages import StageReport, run_embeddings
 from booksmart_core.storage import BookStorage
 from booksmart_core.summaries import SUMMARY_SYSTEM_PROMPT
-from booksmart_core.vectors import COLLECTION_NAME, VectorStore
+from booksmart_core.vectors import (
+    COLLECTION_NAME,
+    DENSE_VECTOR_NAME,
+    SPARSE_RECIPE_KEY,
+    SPARSE_VECTOR_NAME,
+    VectorStore,
+)
 
-from .conftest import StubEmbeddingProvider, StubLLMProvider, get_run
+from .conftest import StubEmbeddingProvider, StubLLMProvider, StubSparseProvider, get_run
 from .test_ingestion_api import register_book
 from .test_knowledge_api import prime_extraction
 from .test_profile_api import register_book_with_hints
@@ -88,11 +96,21 @@ def embed_again(
     book_id: uuid.UUID,
     embedder: EmbeddingProvider,
     vector_store: VectorStore,
+    sparse_embedder: SparseEmbeddingProvider | None = None,
 ) -> StageReport:
-    """Re-run the embeddings stage alone, as a Runner would, for its report."""
+    """Re-run the embeddings stage alone, as a Runner would, for its report.
+
+    The sparse side is incidental to what these tests assert (dense batching and
+    usage), so it defaults to a fresh fake rather than being threaded through
+    every caller — but it is required, because a record without both vectors is
+    not a thing the store will accept."""
     with session_factory() as session:
         return run_embeddings(
-            session, book_id, embedder=embedder, vector_store=vector_store
+            session,
+            book_id,
+            embedder=embedder,
+            sparse_embedder=sparse_embedder or FakeSparseEmbeddingProvider(model="stub-sparse-1"),
+            vector_store=vector_store,
         )
 
 
@@ -426,3 +444,115 @@ class TestEmbeddingUsageReporting:
 
         assert report.embedding_tokens == 0
         assert any("tokens in=?" in line for line in report.log_lines)
+
+
+class TestHybridVectorsAreWrittenTogether:
+    """Issue #38: every embedded record carries both vectors, in one upsert.
+
+    The store makes a one-sided record unconstructible, so what is left to prove
+    here is that the *stage* — the only thing that writes points in production —
+    embeds both sides of every record it persists, and keeps doing so across the
+    reprocess that would expose a partial write.
+    """
+
+    def test_every_point_carries_a_dense_and_a_sparse_vector(
+        self,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        storage: BookStorage,
+        stub_llm: StubLLMProvider,
+        vector_store: VectorStore,
+    ) -> None:
+        book_id = embedded_book(session_factory, settings, storage, stub_llm)
+
+        points, _ = vector_store.client.scroll(COLLECTION_NAME, limit=100, with_vectors=True)
+
+        assert len(points) == 8
+        for point in points:
+            assert isinstance(point.vector, dict)
+            assert set(point.vector) == {DENSE_VECTOR_NAME, SPARSE_VECTOR_NAME}
+
+    def test_reprocessing_leaves_both_vectors_in_place(
+        self,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        storage: BookStorage,
+        stub_llm: StubLLMProvider,
+        stub_embedder: StubEmbeddingProvider,
+        stub_sparse: StubSparseProvider,
+        vector_store: VectorStore,
+    ) -> None:
+        book_id = embedded_book(session_factory, settings, storage, stub_llm)
+
+        embed_again(session_factory, book_id, stub_embedder, vector_store, stub_sparse)
+
+        points, _ = vector_store.client.scroll(COLLECTION_NAME, limit=100, with_vectors=True)
+        assert len(points) == 8
+        for point in points:
+            assert isinstance(point.vector, dict)
+            assert set(point.vector) == {DENSE_VECTOR_NAME, SPARSE_VECTOR_NAME}
+
+    def test_the_sparse_side_embeds_the_same_texts_as_the_dense_side(
+        self,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        storage: BookStorage,
+        stub_llm: StubLLMProvider,
+        stub_embedder: StubEmbeddingProvider,
+        stub_sparse: StubSparseProvider,
+        vector_store: VectorStore,
+    ) -> None:
+        # Two vectors describing different text would rank incoherently once
+        # fused, and nothing downstream could tell.
+        book_id = embedded_book(session_factory, settings, storage, stub_llm)
+        stub_embedder.batches.clear()
+        stub_sparse.batches.clear()
+        stub_embedder.max_batch = 3  # dense batches; the sparse side does not
+
+        embed_again(session_factory, book_id, stub_embedder, vector_store, stub_sparse)
+
+        assert [text for batch in stub_embedder.batches for text in batch] == (
+            stub_sparse.batches[0]
+        )
+
+    def test_the_collection_records_the_sparse_recipe(
+        self,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        storage: BookStorage,
+        stub_llm: StubLLMProvider,
+        stub_sparse: StubSparseProvider,
+        vector_store: VectorStore,
+    ) -> None:
+        embedded_book(session_factory, settings, storage, stub_llm)
+
+        metadata = vector_store.client.get_collection(COLLECTION_NAME).config.metadata or {}
+
+        assert metadata[SPARSE_RECIPE_KEY] == stub_sparse.recipe
+
+    def test_a_book_with_nothing_to_embed_still_clears_its_points(
+        self,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        storage: BookStorage,
+        stub_llm: StubLLMProvider,
+        stub_embedder: StubEmbeddingProvider,
+        stub_sparse: StubSparseProvider,
+        vector_store: VectorStore,
+    ) -> None:
+        # The empty path takes the sparse recipe too, so it cannot drift from
+        # the one the collection is locked to.
+        book_id = embedded_book(session_factory, settings, storage, stub_llm)
+        with session_factory() as session:
+            for chapter in session.scalars(select(Chapter).where(Chapter.book_id == book_id)):
+                session.delete(chapter)
+            for obj in session.scalars(
+                select(KnowledgeObject).where(KnowledgeObject.book_id == book_id)
+            ):
+                session.delete(obj)
+            session.commit()
+
+        report = embed_again(session_factory, book_id, stub_embedder, vector_store, stub_sparse)
+
+        assert report.counts["vectors"] == 0
+        assert count_book_points(vector_store, str(book_id)) == 0

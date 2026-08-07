@@ -20,6 +20,14 @@ dependencies = [
     "sqlalchemy>=2.0",
 ]
 
+[project.optional-dependencies]
+# BM25 sparse vectors for hybrid retrieval (issue #38). Optional because it is
+# the heaviest thing core could depend on (onnxruntime, tokenizers) and a
+# consumer may bring its own sparse provider through the seam in sparse.py or
+# skip hybrid retrieval entirely. The CLI, which defaults to hybrid search,
+# depends on booksmart-core[sparse] rather than leaving it to the user.
+sparse = ["fastembed>=0.8.0,<0.9.0"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

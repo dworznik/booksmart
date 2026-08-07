@@ -17,8 +17,9 @@ from sqlalchemy.orm import Session
 from booksmart_core.extraction import KNOWLEDGE_OBJECT_TYPES
 from booksmart_core.llm import build_embedding_provider
 from booksmart_core.models import Book, BookProfile, Chapter, KnowledgeObject, Run
-from booksmart_core.search import SearchResults
+from booksmart_core.search import SearchMode, SearchResults
 from booksmart_core.search import search as core_search
+from booksmart_core.sparse import build_sparse_embedding_provider
 from booksmart_core.vectors import (
     RECORD_TYPES,
     RecordType,
@@ -163,10 +164,11 @@ def get_knowledge(runtime: Runtime, object_id: uuid.UUID) -> KnowledgeObject:
     return obj
 
 
-def semantic_search(
+def search_records(
     runtime: Runtime,
     query: str,
     *,
+    mode: SearchMode = "hybrid",
     book_id: uuid.UUID | None = None,
     record_types: Sequence[str] | None = None,
     limit: int = 10,
@@ -175,15 +177,20 @@ def semantic_search(
     """Rank embedded records against a natural-language query (no HTTP ancestor —
     this is the first post-split feature, issue #30).
 
+    Not ``semantic_search``: retrieval is hybrid by default, and "semantic" names
+    only the dense half of it (CONTEXT.md).
+
     Validates the user's input before building any provider, so a typo'd book id
-    or record type never demands an embedding API key. The embedded Qdrant client
-    is closed on the way out: it holds a single-process lock on the on-disk
+    or record type never demands an embedding API key. The sparse provider is
+    built only for a hybrid search — constructing it downloads the BM25 model,
+    which a ``--dense-only`` search has no use for. The embedded Qdrant client is
+    closed on the way out: it holds a single-process lock on the on-disk
     directory, and the next command has to be able to open it.
 
     Core's ``SearchResults`` is passed through whole rather than unwrapped to
     ``.hits``: the `search` command renders hits only, but this is the read
-    layer, and dropping the query's usage here would put it out of reach of
-    anything else built on reads.py."""
+    layer, and dropping the query's usage (or the mode that says what its scores
+    mean) here would put it out of reach of anything else built on reads.py."""
     if not query.strip():
         raise CliError("Search query must not be empty")
     if limit < 1:
@@ -199,6 +206,9 @@ def semantic_search(
             _require_book(session, book_id)
 
     embedder = build_embedding_provider(runtime.settings)
+    sparse_embedder = (
+        build_sparse_embedding_provider(runtime.settings) if mode == "hybrid" else None
+    )
     vector_store = build_vector_store(runtime.settings)
     try:
         with runtime.session_factory() as session:
@@ -207,6 +217,8 @@ def semantic_search(
                 vector_store,
                 embedder,
                 query,
+                sparse_embedder=sparse_embedder,
+                mode=mode,
                 book_id=book_id,
                 # Validated against RECORD_TYPES above.
                 record_types=(
