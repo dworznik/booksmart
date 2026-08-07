@@ -168,6 +168,121 @@ class TestLocationIntegrity:
 
         assert "duplicate" in messages(errors_in(lint(load_truth(assets)))).lower()
 
+    def test_an_unquoted_comma_in_a_flow_title_is_an_error(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        """The one malformation that used to pass every guard silently.
+
+        A comma inside an unquoted flow-mapping title is YAML's entry separator,
+        so the title is truncated at it and the remainder becomes keys. The node
+        loads, is scoreable, and can never match the section it describes —
+        which reads as a detection failure rather than an authoring slip. Written
+        as raw YAML rather than as a dict because the dict is the symptom and the
+        text is the cause.
+        """
+        assets = write_truth("a-book")
+        (assets / "truth" / "a-book" / "toc.yaml").write_text(
+            "chapters:\n"
+            "  - id: '1'\n"
+            "    title: First Chapter\n"
+            "    sections:\n"
+            "      - { id: '1.1', title: Widgets, Sprockets, and Grommets }\n"
+        )
+
+        findings = errors_in(lint(load_truth(assets)))
+
+        assert "1.1" in messages(findings)
+        assert "comma" in messages(findings)
+        # The truncated title is the evidence, so the finding has to show it.
+        assert "Widgets" in messages(findings)
+
+    def test_a_stray_key_names_every_key_the_schema_does_not_define(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        """Reported from the parsed shape too, not only from the text that
+        usually causes it — a hand-edited typo produces the same node."""
+        assets = write_truth(
+            "a-book",
+            toc={
+                "chapters": [
+                    {"id": "1", "title": "First", "titel": "Typo", "sctions": []},
+                ]
+            },
+        )
+
+        message = messages(errors_in(lint(load_truth(assets))))
+
+        assert "titel" in message
+        assert "sctions" in message
+
+    def test_a_quoted_title_containing_a_comma_is_fine(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        """The fix for the error above must not itself be reported, and the whole
+        title has to survive — it is what structure fidelity matches on."""
+        assets = write_truth("a-book")
+        (assets / "truth" / "a-book" / "toc.yaml").write_text(
+            "chapters:\n"
+            "  - id: '1'\n"
+            "    title: First Chapter\n"
+            "    sections:\n"
+            "      - { id: '1.1', title: \"Widgets, Sprockets, and Grommets\" }\n"
+        )
+
+        truth = load_truth(assets)
+
+        assert not errors_in(lint(truth))
+        assert truth.books["a-book"].nodes["1.1"].title == "Widgets, Sprockets, and Grommets"
+
+    def test_a_section_carrying_its_own_sections_is_an_error(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        """This schema has two levels. A third one authored here would be read by
+        nobody and scored by nothing, so it has to be said out loud."""
+        assets = write_truth(
+            "a-book",
+            toc={
+                "chapters": [
+                    {
+                        "id": "1",
+                        "title": "First",
+                        "sections": [
+                            {
+                                "id": "1.1",
+                                "title": "A Section",
+                                "sections": [{"id": "1.1.1", "title": "Too Deep"}],
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+
+        findings = errors_in(lint(load_truth(assets)))
+
+        assert "1.1" in messages(findings)
+        assert "sections" in messages(findings)
+
+    def test_a_stray_key_costs_one_finding_not_the_tree(
+        self, write_truth: Callable[..., Path]
+    ) -> None:
+        """Same bargain as an id-less entry: one bad line, one finding, and
+        everything around it still loads."""
+        assets = write_truth(
+            "a-book",
+            toc={
+                "chapters": [
+                    {"id": "1", "title": "First", "stray": None},
+                    {"id": "2", "title": "Second"},
+                ]
+            },
+        )
+
+        truth = load_truth(assets)
+
+        assert set(truth.books["a-book"].nodes) == {"1", "2"}
+        assert len(errors_in(lint(truth))) == 1
+
     def test_an_area_query_naming_an_unknown_book_is_an_error(
         self, write_truth: Callable[..., Path]
     ) -> None:
