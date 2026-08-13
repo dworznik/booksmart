@@ -695,7 +695,7 @@ class TestWhatTheOutlineIsReportedAs:
 
         PdfExtractor().extract(path, log.append)
 
-        assert any("toc: absent" in line for line in log)
+        assert any("outline: absent" in line for line in log)
 
     def test_an_outline_matching_nothing_reports_the_count(self, tmp_path: Path) -> None:
         path = build_three_tier_pdf(
@@ -705,8 +705,50 @@ class TestWhatTheOutlineIsReportedAs:
 
         PdfExtractor().extract(path, log.append)
 
-        assert any("toc: 0/2 matched" in line for line in log)
-        assert not any("toc: absent" in line for line in log)
+        assert any("outline: 0/2 matched" in line for line in log)
+        assert not any("outline: absent" in line for line in log)
+
+    def test_an_outline_matching_nothing_falls_back_and_does_not_decline(
+        self, tmp_path: Path
+    ) -> None:
+        """An alarm about the outline is not a verdict on the book. With nothing
+        to calibrate against the ladder answers alone, every rung it found intact,
+        and a document that plainly has headings does not claim to have none."""
+        path = build_three_tier_pdf(
+            tmp_path / "b.pdf", outline=[[1, "Not On Any Page", 1], [1, "Nor This", 2]]
+        )
+
+        markdown, report = extract(path)
+
+        assert heading_lines(markdown)[:3] == [
+            "# A RUNNING HEAD", "## Chapter 1", "### Section 1.1"
+        ]
+        assert not any("no size contrast" in reason for reason in report.declines)  # type: ignore[attr-defined]
+
+    def test_an_outline_the_ladder_cannot_see_calibrates_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """The cliff the calibration refuses to walk off. Every entry here names a
+        line set at the body size, so the ladder ranks none of them — and reading
+        that as "everything the ladder *can* see outranks the chapters" would
+        discard the whole ladder on the word of a single line it missed."""
+        document = pymupdf.open()
+        for number in range(1, 5):
+            page = document.new_page()
+            page.insert_text((72, 40), "A RUNNING HEAD", fontsize=16.0, fontname=SERIF)
+            page.insert_text((72, 80), f"Chapter {number}", fontsize=BODY_POINTS, fontname=SERIF)
+            page.insert_textbox(
+                pymupdf.Rect(72, 110, 520, 700), PROSE * 4, fontsize=BODY_POINTS, fontname=SERIF
+            )
+        document.set_toc([[1, f"Chapter {number}", number] for number in range(1, 5)])
+        path = tmp_path / "b.pdf"
+        document.save(path)
+        document.close()
+
+        markdown, _ = extract(path)
+
+        assert "# A RUNNING HEAD" in heading_lines(markdown)
+        assert "# Chapter 1" in heading_lines(markdown)
 
     def test_an_outline_that_locates_itself_reports_how_much_of_it_did(
         self, tmp_path: Path
@@ -718,7 +760,7 @@ class TestWhatTheOutlineIsReportedAs:
 
         PdfExtractor().extract(path, log.append)
 
-        assert any("toc: 4/5 matched" in line for line in log)
+        assert any("outline: 4/5 matched" in line for line in log)
 
 
 class TestTheDeclaredOutline:

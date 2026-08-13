@@ -76,10 +76,10 @@ from pathlib import Path
 
 import pymupdf
 
-from booksmart_core.parsing.blocks import Block, to_gfm
+from booksmart_core.parsing.blocks import MAX_HEADING_LEVEL, Block, to_gfm
 from booksmart_core.parsing.contract import ExtractorReport, ParseResult
 from booksmart_core.parsing.mupdf import quiet_mupdf
-from booksmart_core.titles import normalise, titles_match
+from booksmart_core.titles import normalise, title_remainder, titles_match
 
 MONO_FLAG = 1 << 3
 ITALIC_FLAG = 1 << 1
@@ -295,7 +295,11 @@ def read_outline(document: pymupdf.Document) -> tuple[OutlineEntry, ...]:
         entries.append(
             # Clamped because Markdown has six levels and an outline may nest
             # deeper; the deepest levels of a deep outline are one level then.
-            OutlineEntry(level=min(max(int(level), 1), 6), title=str(title), page=int(page) - 1)
+            OutlineEntry(
+                level=min(max(int(level), 1), MAX_HEADING_LEVEL),
+                title=str(title),
+                page=int(page) - 1,
+            )
         )
     return tuple(entries)
 
@@ -318,13 +322,13 @@ def _mark_declared(entries: Sequence[OutlineEntry], lines: Sequence[Line]) -> in
     for line in lines:
         if index >= len(entries):
             break
-        text = normalise(line.text)
-        if not text:
+        text = line.text.strip()
+        if not normalise(text):
             continue
         if remainder:
-            if remainder == text or remainder.startswith(f"{text} "):
+            if titles_match(text, remainder):
                 line.declared_level = entries[index].level
-                remainder = remainder[len(text) :].strip()
+                remainder = title_remainder(text, remainder)
                 if not remainder:
                     index += 1
                 continue
@@ -341,11 +345,7 @@ def _mark_declared(entries: Sequence[OutlineEntry], lines: Sequence[Line]) -> in
         entry = entries[index]
         line.declared_level = entry.level
         found += 1
-        # Only where the line is the *front* of the title is there a rest of it to
-        # look for; `titles_match` also accepts a line that says more than the
-        # entry does, and that line has already said all of it.
-        title = normalise(entry.title)
-        remainder = title[len(text) :].strip() if title.startswith(text) else ""
+        remainder = title_remainder(text, entry.title)
         if not remainder:
             index += 1
     return found
@@ -387,8 +387,8 @@ class OutlineReport:
 
     def __str__(self) -> str:
         if not self.entries:
-            return "toc: absent"
-        return f"toc: {self.located}/{self.entries} matched"
+            return "outline: absent"
+        return f"outline: {self.located}/{self.entries} matched"
 
 
 def read_declared_headings(
@@ -418,34 +418,21 @@ class FontProfile:
     # The sizes of each heading level, largest level first. A level is a *set* of
     # sizes because one typographic level renders across several adjacent tenths.
     heading_levels: tuple[tuple[float, ...], ...] = ()
-    # What the outline says each rung of that ladder means, as `(rank, level)`
-    # pairs by rank. Empty where no outline located anything, and then a rank is
-    # its own level, which is what the ladder said before anything calibrated it.
-    calibration: tuple[tuple[int, int], ...] = ()
+    # The heading level each rung of that ladder means, by rank; `None` for a rung
+    # that outranks the chapters. One entry per rung, so a rank is only ever
+    # looked up rather than computed at the point of use.
+    rung_levels: tuple[int | None, ...] = ()
     heading_decline: str = ""
 
     def level_for(self, rank: int) -> int | None:
-        """The heading level a rung of the size ladder means.
+        """The heading level a rung of the size ladder means, or nothing.
 
         Nothing where the rung is *above* every rung the outline vouched for: a
         running head, a part number and a colophon are all set larger than the
         chapter openers, and the publisher's own outline is what says they are
-        not chapters. Where the outline named nothing this cannot fire, and the
-        ladder keeps every rung it found.
-
-        Below the vouched-for rungs the levels are extrapolated one for one — a
-        size the outline says nothing about sits one level under the nearest size
-        it does. Outlines commonly list chapters only, so most section headings
-        match nothing by design, and pruning them would destroy the section tree.
+        not chapters.
         """
-        if not self.calibration:
-            return rank
-        if rank < self.calibration[0][0]:
-            return None
-        anchor_rank, anchor_level = max(
-            (known, level) for known, level in self.calibration if known <= rank
-        )
-        return min(6, anchor_level + rank - anchor_rank)
+        return self.rung_levels[rank - 1] if 1 <= rank <= len(self.rung_levels) else None
 
 
 def read_typography(lines: Sequence[Line], *, declared: bool = False) -> FontProfile:
@@ -495,10 +482,10 @@ def read_typography(lines: Sequence[Line], *, declared: bool = False) -> FontPro
     )
     # Second pass, because what a rung of the ladder *means* can only be read off
     # the ladder once it exists.
-    return replace(profile, calibration=_calibration(lines, profile))
+    return replace(profile, rung_levels=_rung_levels(lines, profile))
 
 
-def _calibration(lines: Sequence[Line], profile: FontProfile) -> tuple[tuple[int, int], ...]:
+def _rung_levels(lines: Sequence[Line], profile: FontProfile) -> tuple[int | None, ...]:
     """What each rung of the size ladder means, learned from the outline.
 
     Every line the outline named is a heading whose level the publisher stated
@@ -506,6 +493,16 @@ def _calibration(lines: Sequence[Line], profile: FontProfile) -> tuple[tuple[int
     which rung is a part, which is a chapter and which is a section — and that is
     a far better answer than `detect_structure`'s "the smallest level present",
     which one stray large line hijacks for the whole book.
+
+    Below the shallowest rung the outline vouched for, a rung the outline says
+    nothing about sits one level under the nearest rung it does. Outlines
+    commonly list chapters only, so most section headings match nothing by
+    design, and pruning them would destroy the section tree.
+
+    Levels never go back up as sizes go down, whatever the outline states. A
+    publisher naming a small size at a shallow level would otherwise nest a large
+    heading *inside* a smaller one, and `detect_structure` reads that as a
+    section containing its own chapter.
 
     A named line the ladder cannot see at all takes no part in this. It is
     tempting to read one as saying that every size the ladder *can* see outranks
@@ -522,11 +519,24 @@ def _calibration(lines: Sequence[Line], profile: FontProfile) -> tuple[tuple[int
         if rank is None:
             continue
         stated.setdefault(rank, Counter())[line.declared_level] += 1
-    return tuple(
-        # The modal stated level, ties going to the shallower one.
-        (rank, min(levels, key=lambda level: (-levels[level], level)))
-        for rank, levels in sorted(stated.items())
-    )
+    rungs = range(1, len(profile.heading_levels) + 1)
+    if not stated:
+        return tuple(rungs)
+    # The modal stated level for a rung, ties going to the shallower one.
+    vouched = {
+        rank: min(levels, key=lambda level: (-levels[level], level))
+        for rank, levels in stated.items()
+    }
+    chapters = min(vouched)
+    levels: list[int | None] = []
+    running = 0
+    for rank in rungs:
+        if rank < chapters:
+            levels.append(None)
+            continue
+        running = max(vouched[rank], running) if rank in vouched else running + 1
+        levels.append(min(MAX_HEADING_LEVEL, running))
+    return tuple(levels)
 
 
 def _modal_size(lines: Sequence[Line]) -> float:

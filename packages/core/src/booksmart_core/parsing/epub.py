@@ -77,7 +77,7 @@ from urllib.parse import unquote
 from xml.etree import ElementTree
 
 from booksmart_core.parsing.contract import ExtractorReport, ParseFailure, ParseResult
-from booksmart_core.parsing.blocks import Block, looks_like_code, to_gfm
+from booksmart_core.parsing.blocks import MAX_HEADING_LEVEL, Block, looks_like_code, to_gfm
 from booksmart_core.titles import normalise
 
 CONTAINER = "META-INF/container.xml"
@@ -759,7 +759,7 @@ def _navigation_point(level: int, title: str, source: str, base: str) -> NavPoin
     href, _, fragment = source.partition("#")
     # Clamped because Markdown has six levels and navigation may nest deeper.
     return NavPoint(
-        level=min(max(level, 1), 6),
+        level=min(max(level, 1), MAX_HEADING_LEVEL),
         title=title.strip(),
         href=_member(base, href),
         fragment=fragment,

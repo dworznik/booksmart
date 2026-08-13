@@ -18,20 +18,29 @@ _ALPHANUM = re.compile(r"[^a-z0-9]+")
 # Characters that are in the text without being in the word. Some PDFs carry a
 # soft hyphen at every legal break point, so collapsing one to a space splits the
 # word around it and a heading differing from the authored one by an invisible
-# character silently stops matching. Deleted rather than replaced, which is the
-# opposite of what happens to real punctuation.
+# character silently stops matching. An EPUB may separate code tokens with
+# zero-width spaces for the same invisible effect. Deleted rather than replaced,
+# which is the opposite of what happens to real punctuation.
 #
 # Written as escapes, not as the characters themselves: a reader cannot see a
 # soft hyphen in a diff, and any tool that strips them would change what this
 # line means without changing how it looks.
-_INVISIBLE = str.maketrans(
+INVISIBLE = str.maketrans(
     dict.fromkeys("\u00ad\u200b\u200c\u200d\ufeff")  # soft hyphen, ZWSP, ZWNJ, ZWJ, BOM
 )
 
 
 def normalise(text: str) -> str:
     """Lower-cased, punctuation collapsed — the form both sides are compared in."""
-    return _ALPHANUM.sub(" ", text.translate(_INVISIBLE).lower()).strip()
+    return _ALPHANUM.sub(" ", text.translate(INVISIBLE).lower()).strip()
+
+
+def _begins(text: str, opening: str) -> bool:
+    """Whether normalised ``text`` opens with ``opening``, on a whole word.
+
+    On a whole word, so that "chapter 4" does not begin "chapter 40".
+    """
+    return text == opening or text.startswith(f"{opening} ")
 
 
 def titles_match(heading: str, entry: str) -> bool:
@@ -45,15 +54,33 @@ def titles_match(heading: str, entry: str) -> bool:
     against the full title on the page. Requiring equality loses both, and each
     of them loses a whole chapter.
 
-    It has to be the *beginning*, on a whole word. Containment anywhere was
-    measured against real books and it is far too loose: an entry reading
-    "1.3 Formulating Abstractions with Higher-Order Procedures" contains the word
-    "procedures", so a body line saying only that matched it — and one spurious
-    match is enough to teach a caller the wrong thing about the whole document.
-    Two spellings of one title agree on how they start; what they disagree about
-    is a number or a subtitle at the end.
+    It has to be the *beginning*. Containment anywhere was measured against a
+    real book and it is far too loose: a section entry ending in a common word
+    was matched by a body line saying only that word, and that one spurious match
+    taught the caller the wrong thing about the whole document — it cost six of
+    the document's seven headings. Two spellings of one title agree on how they
+    start; what they disagree about is a number or a subtitle at the end.
+
+    What this does not reach is a number on one side only — an entry reading
+    "Introduction" against a page setting "1 Introduction". That case is visible
+    rather than silent: it shows up as an entry the outline could not locate, and
+    the extractor reports how many of those there were.
     """
     left, right = normalise(heading), normalise(entry)
     if not left or not right:
         return False
-    return left == right or left.startswith(f"{right} ") or right.startswith(f"{left} ")
+    return _begins(left, right) or _begins(right, left)
+
+
+def title_remainder(heading: str, entry: str) -> str:
+    """What is left of ``entry`` once ``heading`` has said the front of it.
+
+    Empty where there is nothing left to look for — including where the heading
+    said *more* than the entry does, which `titles_match` also accepts. A title
+    too long for its measure wraps, and this is what lets a caller pick the rest
+    of it up off the next line instead of losing half the chapter's name.
+    """
+    left, right = normalise(heading), normalise(entry)
+    if not left or not right or not _begins(right, left):
+        return ""
+    return right[len(left) :].strip()

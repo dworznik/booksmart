@@ -6,7 +6,7 @@ no error, no log line, just a chapter that quietly is not there — and one real
 book carries a zero-width space in several hundred of its lines.
 """
 
-from booksmart_core.titles import normalise, titles_match
+from booksmart_core.titles import normalise, title_remainder, titles_match
 
 
 class TestNormalise:
@@ -56,17 +56,26 @@ class TestTitlesMatch:
 
     def test_a_word_from_the_end_of_an_entry_does_not_match_it(self) -> None:
         """Measured against a real book. Containment anywhere let a body line
-        saying one word match a section entry ending in that word, and the single
-        spurious match taught the caller the wrong thing about the whole
-        document — it cost six of that document's seven headings."""
-        entry = "1.3 Formulating Abstractions with Higher-Order Procedures"
+        saying one common word match a section entry that happened to end in it,
+        and the single spurious match taught the caller the wrong thing about the
+        whole document — it cost six of that document's seven headings."""
+        entry = "2.4 Reading a Container Without Extracting It"
 
-        assert not titles_match("Procedures", entry)
-        assert not titles_match("Higher-Order Procedures", entry)
+        assert not titles_match("It", entry)
+        assert not titles_match("Without Extracting It", entry)
 
     def test_a_word_that_only_begins_the_same_way_does_not_match(self) -> None:
         """Whole words, so "Chapter 4" does not begin "Chapter 40"."""
         assert not titles_match("Chapter 4", "Chapter 40: A Title")
+
+    def test_the_rest_of_a_title_is_what_the_line_did_not_say(self) -> None:
+        """A title too long for its measure wraps, and this is what lets a caller
+        pick the second half of it off the next line."""
+        assert title_remainder("Chapter 4", "Chapter 4: A Title") == "a title"
+
+    def test_there_is_no_rest_of_a_title_the_line_said_whole(self) -> None:
+        assert title_remainder("Chapter 4: A Title", "Chapter 4: A Title") == ""
+        assert title_remainder("Chapter 4: A Title and More", "Chapter 4: A Title") == ""
 
     def test_nothing_matches_an_empty_side(self) -> None:
         """Otherwise every heading matches, since "" is contained in everything —

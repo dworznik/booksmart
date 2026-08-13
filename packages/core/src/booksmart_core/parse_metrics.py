@@ -38,18 +38,11 @@ import pymupdf
 from booksmart_core.parsing.blocks import looks_like_code
 from booksmart_core.parsing.contract import ExtractorReport
 from booksmart_core.parsing.mupdf import quiet_mupdf
+# The one table of characters that are in the text without being in the word.
+# This module had its own copy; two copies of a rule about characters nothing
+# renders would drift without either side ever looking different.
+from booksmart_core.titles import INVISIBLE as _INVISIBLE
 
-# Characters that are in the text without being in the word: some PDFs carry a
-# soft hyphen at every legal break point, and an EPUB may separate code tokens
-# with zero-width spaces. Deleted rather than replaced — the word they interrupt
-# is one word.
-#
-# Written as escapes, not as the characters themselves: a reader cannot see a
-# soft hyphen in a diff, and any tool that strips them would change what this
-# line means without changing how it looks.
-_INVISIBLE = str.maketrans(
-    dict.fromkeys("\u00ad\u200b\u200c\u200d\ufeff")  # soft hyphen, ZWSP, ZWNJ, ZWJ, BOM
-)
 
 # A word split across a line end by a typesetter's hyphen. Joined before
 # comparison, because an extractor that de-hyphenates correctly would otherwise

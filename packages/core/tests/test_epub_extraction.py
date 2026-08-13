@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from booksmart_core.parsing import ParseFailure
+from booksmart_core.parse_metrics import suspect_headings
 from booksmart_core.parsing.epub import EpubExtractor, read_spine
 from booksmart_core.structure import detect_structure
 
@@ -396,6 +397,22 @@ class TestTheDeclaredNavigation:
         assert heading_lines(markdown) == ["# Chapter One"]
         assert prose in markdown
 
+    def test_an_invisible_character_does_not_lose_the_title(self, tmp_path: Path) -> None:
+        """The anchored line has to say what the container says the chapter is
+        called, and a character nothing renders would otherwise make those two
+        different strings — which costs the line its heading and leaves the
+        declared title emitted in front of it instead."""
+        path = build_epub(
+            tmp_path / "b.epub",
+            {"a.xhtml": '<p class="c5"><a id="c1"/>Chapter\u200b One</p><p>prose</p>'},
+            ncx=[("Chapter One", "a.xhtml#c1", [])],
+        )
+
+        markdown, _ = extract(path)
+
+        assert len(heading_lines(markdown)) == 1
+        assert markdown.count("One") == 1
+
     def test_nesting_in_the_navigation_is_the_heading_level(self, tmp_path: Path) -> None:
         path = build_epub(
             tmp_path / "b.epub",
@@ -695,6 +712,10 @@ class TestNoChapterBoundaryFallsInsideAFence:
 
         assert [chapter.title for chapter in chapters] == ["Chapter One", "Chapter Two"]
         assert not any(chapter.sections for chapter in chapters)
+        # End to end, and the reason the counter is worth reporting: what the
+        # escaper produces is what `structure.py` reads, and a code-shaped title
+        # arriving there is the measured symptom of this having failed.
+        assert suspect_headings(markdown) == ()
 
 
 class TestProseIsEscaped:
