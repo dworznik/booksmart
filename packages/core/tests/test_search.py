@@ -56,8 +56,8 @@ def book_id(session_factory: sessionmaker[Session], storage: object) -> uuid.UUI
         store_book(
             session_factory,
             storage,  # type: ignore[arg-type]
-            title="A Philosophy of Software Design",
-            author="Ousterhout",
+            title="A Book About Software Design",
+            author="Author",
             filename="apsd.pdf",
             content=b"%PDF-1.4 fake",
         )

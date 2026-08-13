@@ -51,8 +51,8 @@ def test_data_dir_relocates_to_a_new_absolute_root(tmp_path: Path) -> None:
     book_id = store_book(
         session_factory_a,
         storage_a,
-        title="Clean Code",
-        author="Robert C. Martin",
+        title="A Book About Craft",
+        author="A. N. Author",
         filename="clean-code.pdf",
         content=original_bytes,
     )

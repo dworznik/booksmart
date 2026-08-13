@@ -72,8 +72,8 @@ def register_book(
     return store_book(
         session_factory,
         storage,
-        title="Clean Code",
-        author="Robert C. Martin",
+        title="A Book About Craft",
+        author="A. N. Author",
         filename=filename,
         content=content if content is not None else make_pdf_bytes(),
     )
