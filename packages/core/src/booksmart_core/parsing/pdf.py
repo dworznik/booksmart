@@ -117,9 +117,16 @@ MIN_HEADING_SHARE = 0.02
 # Sizes closer together than this are one typographic level. A level set at a
 # nominal size renders across several adjacent tenths, and keyed on the tenth it
 # takes a slot per tenth — observed at four slots for a single level, leaving two
-# for the entire rest of the tree. Relative, because a tenth of a point is a
-# rounding error at 24pt and a real distinction at 8pt.
+# for the entire rest of the tree.
+#
+# Both bounds are load-bearing, and the *smaller* of the two applies. Relative,
+# because a tenth of a point is a rounding error at 24pt and a real distinction
+# at 8pt. Absolute, because the relative bound alone grows with the size until it
+# swallows real distance: at 30pt it reaches 0.6pt, which is enough to chain a
+# title page's size to a part number's and let two pieces of furniture pool their
+# populations into one level that clears the floor between them.
 SIZE_TOLERANCE_SHARE = 0.02
+MAX_SIZE_TOLERANCE = 0.3
 # How much of an outline has to be found on the pages it names before it is read
 # as a statement about *this* document rather than a stale one.
 MIN_OUTLINE_MATCH = 0.5
@@ -273,11 +280,13 @@ def read_outline(document: pymupdf.Document) -> tuple[OutlineEntry, ...]:
     """
     entries: list[OutlineEntry] = []
     for level, title, page in document.get_toc(simple=True):
-        # `page` is -1 for an entry pointing outside the document (a URL, or a
-        # destination that no longer resolves), and Markdown has six levels.
+        # `page` is -1 for an entry pointing outside the document — a URL, or a
+        # destination that no longer resolves.
         if int(page) < 1 or not str(title).strip():
             continue
         entries.append(
+            # Clamped because Markdown has six levels and an outline may nest
+            # deeper; the deepest levels of a deep outline are one level then.
             OutlineEntry(level=min(max(int(level), 1), 6), title=str(title), page=int(page) - 1)
         )
     return tuple(entries)
@@ -296,7 +305,7 @@ def _key(text: str) -> str:
     return _NOT_KEYABLE.sub(" ", text.lower()).strip()
 
 
-def declared_headings(entries: Sequence[OutlineEntry], lines: Sequence[Line]) -> int:
+def _mark_declared(entries: Sequence[OutlineEntry], lines: Sequence[Line]) -> int:
     """Mark the lines the outline declares to be headings; count the entries found.
 
     Matching is by page and then by title, in document order: an entry can only
@@ -305,8 +314,8 @@ def declared_headings(entries: Sequence[OutlineEntry], lines: Sequence[Line]) ->
     costs its own chapter and nothing else.
 
     A title too long for its measure wraps, so it is matched a piece at a time:
-    "Chapter 2" then "Building Abstractions with Data" is one outline entry and
-    two lines on the paper, and both lines are the heading.
+    "Chapter 2" then "Reading The Container" is one outline entry and two lines on
+    the paper, and both lines are the heading.
     """
     found = 0
     index = 0
@@ -374,7 +383,7 @@ def read_declared_headings(document: pymupdf.Document, lines: Sequence[Line]) ->
     entries = read_outline(document)
     if not entries:
         return 0
-    found = declared_headings(entries, lines)
+    found = _mark_declared(entries, lines)
     if found < len(entries) * MIN_OUTLINE_MATCH:
         for line in lines:
             line.declared_level = None
@@ -538,8 +547,10 @@ def _heading_levels(
 
     Sizes within a tolerance of each other are one level, not several, because a
     level set at a nominal size renders across several adjacent tenths of a
-    point. Clustering comes first: fragmentation is what manufactures the
-    low-population sizes the floor then discards.
+    point. Clustering comes first so that a level fragmented across those tenths
+    is weighed as the one population it is, rather than discarded a tenth at a
+    time — which is the interaction between the two rules, and the reason the
+    tolerance has an absolute bound as well as a relative one.
 
     The short-line test is applied here and not only when a level is assigned. A
     pull quote or an epigraph set larger than the body is a paragraph, and letting
@@ -572,11 +583,16 @@ def _clusters(sizes: Sequence[float]) -> list[tuple[float, ...]]:
     """
     grouped: list[list[float]] = []
     for size in sizes:
-        if grouped and grouped[-1][-1] - size <= grouped[-1][-1] * SIZE_TOLERANCE_SHARE:
+        if grouped and grouped[-1][-1] - size <= _tolerance(grouped[-1][-1]):
             grouped[-1].append(size)
             continue
         grouped.append([size])
     return [tuple(cluster) for cluster in grouped]
+
+
+def _tolerance(size: float) -> float:
+    """How far from a size another one can be and still be the same level."""
+    return min(size * SIZE_TOLERANCE_SHARE, MAX_SIZE_TOLERANCE)
 
 
 def _could_be_a_heading(

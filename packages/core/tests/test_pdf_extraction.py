@@ -500,6 +500,26 @@ class TestTheSixLevelsAreSpentOnRealLevels:
         assert {line.split(" ", 1)[0] for line in headings if "Chapter" in line} == {"#"}
         assert {line.split(" ", 1)[0] for line in headings if "Section" in line} == {"##"}
 
+    def test_display_sizes_half_a_point_apart_do_not_pool_into_a_level(
+        self, tmp_path: Path
+    ) -> None:
+        """The two rules interact, and the tolerance is what keeps them honest. A
+        purely relative tolerance grows with the size — at 30pt it reaches 0.6pt —
+        until distinct pieces of furniture chain into one cluster whose *summed*
+        population clears the floor that would have discarded each of them."""
+        display = [
+            (f"Display {number}", points)
+            for number, points in enumerate((30.0, 29.5, 29.0), start=1)
+        ]
+        sections = [(f"Section {number}", 14.0) for number in range(1, 101)]
+        path = build_sectioned_pdf(tmp_path / "b.pdf", display + sections)
+
+        markdown, _ = extract(path)
+
+        headings = heading_lines(markdown)
+        assert len(headings) == 100
+        assert all(line.startswith("# Section ") for line in headings)
+
     def test_a_short_document_keeps_every_size_it_has(self, tmp_path: Path) -> None:
         """The floor is a share of the document's own candidate lines, never a
         count. In a document with three headings in it, all three are the book."""

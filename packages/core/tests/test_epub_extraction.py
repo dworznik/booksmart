@@ -35,14 +35,14 @@ CONTAINER = (
 )
 
 
-# A declared table of contents, as `(title, href, children)` — the one shape both
-# an EPUB 2 NCX and an EPUB 3 nav document express, nesting and all.
-Toc = list[tuple[str, str, list]]
+# The chapter tree a container declares, as `(title, href, children)` — the one
+# shape both an EPUB 2 NCX and an EPUB 3 nav document express, nesting and all.
+Navigation = list[tuple[str, str, list]]
 
 
-def _ncx(toc: Toc) -> str:
+def _ncx(toc: Navigation) -> str:
     counter = iter(range(1, 1000))
-    def points(entries: Toc) -> str:
+    def points(entries: Navigation) -> str:
         return "".join(
             f'<navPoint id="p{next(counter)}"><navLabel><text>{title}</text></navLabel>'
             f'<content src="{href}"/>{points(children)}</navPoint>'
@@ -56,8 +56,8 @@ def _ncx(toc: Toc) -> str:
     )
 
 
-def _nav_document(toc: Toc) -> str:
-    def items(entries: Toc) -> str:
+def _nav_document(toc: Navigation) -> str:
+    def items(entries: Navigation) -> str:
         return "<ol>" + "".join(
             f'<li><a href="{href}">{title}</a>{items(children) if children else ""}</li>'
             for title, href, children in entries
@@ -77,16 +77,16 @@ def build_epub(
     spine: list[str] | None = None,
     manifest: dict[str, str] | None = None,
     omit: frozenset[str] = frozenset(),
-    ncx: Toc | None = None,
-    nav: Toc | None = None,
+    ncx: Navigation | None = None,
+    nav: Navigation | None = None,
 ) -> Path:
     """An EPUB from `{filename: body html}`.
 
     ``manifest`` and ``omit`` exist for the failure cases: a spine referencing an
     id the manifest never declares, and a manifest entry whose file is not in the
-    zip. ``ncx`` and ``nav`` declare a table of contents the EPUB 2 way and the
-    EPUB 3 way respectively — the same tree, said twice over, which is what a
-    reader of this route has to cope with.
+    zip. ``ncx`` and ``nav`` declare a chapter tree the EPUB 2 way and the EPUB 3
+    way respectively — the same tree, said twice over, which is what a reader of
+    this route has to cope with.
     """
     items = manifest or {f"id{index}": name for index, name in enumerate(documents)}
     order = spine if spine is not None else list(items)
@@ -376,6 +376,25 @@ class TestTheDeclaredNavigation:
         markdown, _ = extract(path)
 
         assert markdown.count("Chapter One") == 1
+
+    def test_an_anchor_inside_prose_does_not_turn_the_prose_into_a_heading(
+        self, tmp_path: Path
+    ) -> None:
+        """An entry frequently lands on the chapter's first paragraph rather than
+        on its title. Reading whatever it anchors as the title would promote a
+        paragraph of prose to a heading — and lose it as prose, since the heading
+        replaces it. The declared title goes in front instead."""
+        prose = "It was a dark and stormy night, and the rain fell in torrents."
+        path = build_epub(
+            tmp_path / "b.epub",
+            {"a.xhtml": f'<p><a id="c1"/>{prose}</p><p>More prose still.</p>'},
+            ncx=[("Chapter One", "a.xhtml#c1", [])],
+        )
+
+        markdown, _ = extract(path)
+
+        assert heading_lines(markdown) == ["# Chapter One"]
+        assert prose in markdown
 
     def test_nesting_in_the_navigation_is_the_heading_level(self, tmp_path: Path) -> None:
         path = build_epub(

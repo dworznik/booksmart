@@ -85,13 +85,6 @@ OPF_NS = "{http://www.idpf.org/2007/opf}"
 NCX_NS = "{http://www.daisy.org/z3986/2005/ncx/}"
 NCX_MEDIA_TYPE = "application/x-dtbncx+xml"
 
-# What a navigation entry can point at, and how long the longest of those is. An
-# entry anchors either the line carrying the chapter's title — which then *is*
-# the heading, so the title is not also left sitting in the prose beside it — or
-# the chapter itself, which the heading goes in front of. Past this many
-# characters it is the chapter.
-MAX_DECLARED_TITLE = 200
-
 # A spine document that is a picture of content rather than content. Four of the
 # pinned books ship a screenshot of every listing as an extra spine document —
 # 195 of them, around seventy characters each, against thousands for real
@@ -351,9 +344,37 @@ def _code_body(element: Element, rule: CodeRule) -> str:
 # --- document -> blocks ----------------------------------------------------
 
 
+@dataclass(frozen=True)
+class NavPoint:
+    """One entry of the chapter tree the container declares."""
+
+    level: int
+    title: str
+    href: str  # a zip member name
+    fragment: str  # an element id within it, or "" for the document itself
+
+
+# What separates the two things a navigation entry can anchor: the line carrying
+# the chapter's title, and the chapter itself. Told apart by the title rather
+# than by a length, because a length cannot tell a title from the first sentence
+# of a short chapter — and mistaking one for the other turns a paragraph of prose
+# into a heading and loses it as prose.
+_NOT_KEYABLE = re.compile(r"[^0-9a-z]+")
+
+
+def _key(title: str) -> str:
+    """A title reduced to what two spellings of it have in common.
+
+    The container and the page agree on the words and disagree on everything
+    else: the NCX says "Chapter 1: Beginnings", the page sets "CHAPTER ONE" in
+    small caps with a decorative rule under it.
+    """
+    return _NOT_KEYABLE.sub(" ", title.lower()).strip()
+
+
 def _declared_anchors(
-    document: Element, points: Sequence["NavPoint"]
-) -> tuple[list["NavPoint"], dict[int, "NavPoint"], dict[int, "NavPoint"]]:
+    document: Element, points: Sequence[NavPoint]
+) -> tuple[list[NavPoint], dict[int, NavPoint], dict[int, NavPoint]]:
     """Where in this document each declared entry's heading goes.
 
     Three answers, because a navigation target is one of three things. An entry
@@ -366,9 +387,9 @@ def _declared_anchors(
     An entry whose anchor is not in the document is skipped. A stale id costs its
     own chapter and nothing else.
     """
-    leading: list["NavPoint"] = []
-    titles: dict[int, "NavPoint"] = {}
-    before: dict[int, "NavPoint"] = {}
+    leading: list[NavPoint] = []
+    titles: dict[int, NavPoint] = {}
+    before: dict[int, NavPoint] = {}
     by_id: dict[str, Element] = {}
     for element in document.descendants():
         identifier = element.attrs.get("id", "")
@@ -381,7 +402,7 @@ def _declared_anchors(
         anchor = by_id.get(point.fragment)
         if anchor is None:
             continue
-        target = _title_element(anchor)
+        target = _title_element(anchor, point.title)
         if target is None:
             before.setdefault(id(anchor), point)
         else:
@@ -389,28 +410,34 @@ def _declared_anchors(
     return leading, titles, before
 
 
-def _title_element(element: Element) -> Element | None:
-    """The element whose own text is the chapter's title, if one of these is.
+def _title_element(element: Element, title: str) -> Element | None:
+    """The element whose own text *is* this entry's title, if either of these is.
 
     The anchor itself where it carries the title. Its parent where the anchor is
     an empty `<a id="…"/>` inside the line that does, which is what a conversion
-    emits — an id is cheaper to place than a heading. Nothing where what is
-    anchored is chapter-sized.
+    emits — an id is cheaper to place than a heading.
+
+    Nothing where neither says what the container says the chapter is called: the
+    anchor is then a destination inside the chapter rather than its title, and the
+    heading goes in front of it. Failing this way costs a title said twice, once
+    as a heading and again as the paragraph it sits in. Failing the other way
+    would promote a paragraph of prose to a heading and lose it as prose.
     """
-    own = element.text().strip()
-    if own:
-        return element if len(own) <= MAX_DECLARED_TITLE else None
+    wanted = _key(title)
+    if not wanted:
+        return None
+    if _key(element.text()) == wanted:
+        return element
     parent = element.parent
     # `<body>` is never a title, however short the document is; and it is not a
     # child of anything the walk descends through, so a heading put there is lost.
     if parent is None or parent.tag in {"body", "html", "#document"}:
         return None
-    text = parent.text().strip()
-    return parent if text and len(text) <= MAX_DECLARED_TITLE else None
+    return parent if _key(parent.text()) == wanted else None
 
 
 def _blocks_of(
-    document: Element, rules: Sequence[CodeRule], declared: Sequence["NavPoint"] = ()
+    document: Element, rules: Sequence[CodeRule], declared: Sequence[NavPoint]
 ) -> tuple[list[Block], dict[str, int]]:
     blocks: list[Block] = []
     fired: dict[str, int] = {}
@@ -615,6 +642,16 @@ def _package_path(archive: zipfile.ZipFile) -> str:
     return unquote(str(rootfile.get("full-path")))
 
 
+def _member(base: str, href: str) -> str:
+    """An href as a zip member name, resolved against the directory it was in.
+
+    The directory differs by who wrote the href: a manifest's are relative to the
+    package document, a nav document's to the nav document, and the two are not
+    always the same directory.
+    """
+    return posixpath.normpath(posixpath.join(base, href)) if base and href else href
+
+
 @dataclass(frozen=True)
 class _Package:
     """The package document, and where its hrefs are resolved from."""
@@ -624,8 +661,7 @@ class _Package:
     base: str
 
     def member(self, href: str) -> str:
-        """A manifest href as a zip member name."""
-        return posixpath.normpath(posixpath.join(self.base, href)) if self.base else href
+        return _member(self.base, href)
 
 
 def _read_package(archive: zipfile.ZipFile) -> _Package:
@@ -678,16 +714,6 @@ def read_spine(archive: zipfile.ZipFile) -> tuple[SpineItem, ...]:
     if not items:
         raise ParseFailure(f"{package_path} declares an empty spine")
     return tuple(items)
-
-
-@dataclass(frozen=True)
-class NavPoint:
-    """One entry of the chapter tree the container declares."""
-
-    level: int
-    title: str
-    href: str  # a zip member name
-    fragment: str  # an element id within it, or "" for the document itself
 
 
 def read_navigation(archive: zipfile.ZipFile) -> tuple[NavPoint, ...]:
@@ -743,9 +769,12 @@ def _navigation_documents(package: _Package, members: set[str]) -> list[tuple[st
 
 def _navigation_point(level: int, title: str, source: str, base: str) -> NavPoint:
     href, _, fragment = source.partition("#")
-    member = posixpath.normpath(posixpath.join(base, href)) if base and href else href
+    # Clamped because Markdown has six levels and navigation may nest deeper.
     return NavPoint(
-        level=min(max(level, 1), 6), title=title.strip(), href=member, fragment=fragment
+        level=min(max(level, 1), 6),
+        title=title.strip(),
+        href=_member(base, href),
+        fragment=fragment,
     )
 
 

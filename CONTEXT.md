@@ -58,8 +58,11 @@ EPUB's `toc.ncx` or nav document. It is the publisher's own answer to what the
 chapters are, so an Extractor reads it in preference to inferring one, and
 infers only where there is nothing to read. It answers *structure* and never
 reading order, which is the spine's answer and the spine's alone.
-_Avoid_: table of contents (that is the authored one a consumer scores
-against), outline (PDF's word for it, not both formats').
+_Avoid_: table of contents — that is the authored one a consumer scores
+against. Each format's own name for its copy is right where that format is
+what is being discussed (a PDF **outline**, an EPUB **NCX** or **nav
+document**); Declared navigation is the term for the thing they are both
+instances of, and the only one that fits a rule spanning routes.
 
 **Decline**:
 An Extractor's report that a signal it needs is not reliable for this document,
