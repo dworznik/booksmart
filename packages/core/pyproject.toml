@@ -24,6 +24,12 @@ dependencies = [
     "sqlalchemy>=2.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/dworznik/booksmart"
+Source = "https://github.com/dworznik/booksmart"
+Issues = "https://github.com/dworznik/booksmart/issues"
+Changelog = "https://github.com/dworznik/booksmart/releases"
+
 [project.optional-dependencies]
 # BM25 sparse vectors for hybrid retrieval. Optional because it is
 # the heaviest thing core could depend on (onnxruntime, tokenizers) and a

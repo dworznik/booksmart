@@ -24,6 +24,12 @@ dependencies = [
     "tomlkit>=0.13.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/dworznik/booksmart"
+Source = "https://github.com/dworznik/booksmart"
+Issues = "https://github.com/dworznik/booksmart/issues"
+Changelog = "https://github.com/dworznik/booksmart/releases"
+
 [project.scripts]
 booksmart = "booksmart_cli.main:app"
 
