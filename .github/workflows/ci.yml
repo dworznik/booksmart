@@ -32,7 +32,7 @@ jobs:
 
   # The same suite against Postgres + a Qdrant server — the server consumer's
   # shape — so a Postgres-only regression (or a lost pg-ism) cannot land
-  # silently, and local-vs-server Qdrant search parity (issue #33) is actually
+  # silently, and local-vs-server Qdrant search parity is actually
   # executed rather than assumed.
   test-postgres:
     runs-on: ubuntu-latest

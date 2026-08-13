@@ -1,18 +1,19 @@
 # booksmart
 
-The Booksmart CLI — turn books into queryable knowledge, locally.
+Turn books into queryable knowledge, on your own machine.
 
-A single-user front end over
-[`booksmart-core`](https://pypi.org/project/booksmart-core/): register PDFs/EPUBs,
-ingest them through the parsing → structure → profile → extraction → summaries →
-embeddings pipeline, and browse the results. Everything runs against an
-auto-migrated SQLite file and embedded Qdrant under `~/.booksmart/` — no Docker,
-no Postgres, no server.
+Point it at a PDF or an EPUB. It reads the book, works out its chapters and
+sections, extracts the ideas it teaches, summarises them, and makes the whole
+thing searchable in plain language — so you can ask *"how do deep modules reduce
+complexity?"* and get the passage that answers it, with the chapter it came from.
+
+Everything stays local: an SQLite file and an embedded vector store under
+`~/.booksmart/`. No Docker, no Postgres, no server, nothing to run alongside it.
 
 ## Install
 
-Needs Python 3.12 or newer. `booksmart` is a command-line tool, so install it
-into its own environment rather than into a project's:
+Python 3.12 or newer. `booksmart` is a command-line tool, so install it into its
+own environment rather than a project's:
 
 ```console
 $ uv tool install booksmart
@@ -20,66 +21,82 @@ $ pipx install booksmart
 ```
 
 Either puts a `booksmart` command on your PATH. Plain `pip install booksmart`
-also works if you would rather have it in the current environment.
-`booksmart-core` comes along as a dependency in every case.
+works too if you would rather have it in the current environment.
 
 ## Quickstart
 
-`ingest` calls an LLM and an embedding provider, so it needs credentials —
-an Anthropic key (LLM) and an OpenAI key (embeddings) by default. Set them
-once; they persist in `~/.booksmart/config.toml`:
+Reading a book calls an LLM and an embedding provider, so it needs credentials —
+by default an Anthropic key for the language model and an OpenAI key for
+embeddings. Set them once; they persist:
 
 ```console
 $ booksmart config set anthropic_api_key   # hidden prompt, or pipe the key in
 $ booksmart config set openai_api_key
 $ booksmart add ./clean-code.pdf --title "Clean Code" --author "Robert C. Martin"
 $ booksmart ingest <book-id>
-$ booksmart structure <book-id>
-$ booksmart knowledge list <book-id>
 $ booksmart search all "how do deep modules reduce complexity"
 ```
 
-To drive the whole pipeline with no keys, no network and no cost, select the
-deterministic fake providers:
+Then look around: `booksmart structure <book-id>` for the chapter tree,
+`booksmart knowledge list <book-id>` for the ideas it pulled out, and
+`booksmart books list` for what you have.
+
+Want to try the whole pipeline with no keys, no network and no cost? Use the
+built-in fake providers:
 
 ```console
 $ BOOKSMART_LLM_PROVIDER=fake BOOKSMART_EMBEDDING_PROVIDER=fake booksmart ingest <book-id>
 ```
+
+## Searching
+
+```console
+$ booksmart search <book-id|all> "<query>"
+```
+
+Search matches two ways at once — by **meaning**, so a question finds a passage
+phrased differently, and by **words**, so an exact term or a proper noun still
+ranks even if the model never learned it. Results fuse both.
+
+- `--dense-only` — match by meaning alone.
+- `--type` — restrict to `chapter`, `section` or `knowledge_object`; repeatable.
+- `--limit` — how many hits.
+- `--score-threshold` — drop weak hits by similarity.
+
+The `score` column means different things in the two modes, so the output says
+which you are looking at. With `--dense-only` it is a similarity between -1 and
+1. Fused, it measures how strongly both kinds of matching agreed, and only
+compares within one set of results — a fused `0.583` can be the best hit there
+is.
+
+**Changing your embedding model means re-reading your books.** Search refuses to
+run against a collection built with a different model rather than return
+plausible, silently wrong rankings — and tells you so.
 
 ## Commands
 
 `add`, `ingest`, `books list/show/update`, `runs list/show`, `structure`,
 `profile`, `knowledge list/show`, `search`, `config set/get/unset/list`.
 
-### Search
-
-`booksmart search <book-id|all> "<query>"` ranks the chapters, sections and
-knowledge objects most similar to a natural-language query, over the embeddings
-an ingest produced. Restrict it with `--type` (repeatable: `chapter`, `section`,
-`knowledge_object`), cap it with `--limit`, and drop weak hits with
-`--score-threshold` (a cosine similarity, `-1`–`1`).
-
-The query is embedded with the model the vector collection is locked to; if that
-is not the currently configured embedding model, search refuses rather than
-return plausible, silently wrong rankings (ADR 0001).
-
 ## Configuration
 
-Any setting — provider, model, API keys, locations — can be persisted with
-`booksmart config set <field> [value]` (omit the value to enter it via hidden
-prompt or piped stdin, keeping keys out of shell history). Values live in
+Any setting — provider, model, API keys, locations — persists with
+`booksmart config set <field> [value]`. Omit the value to enter it at a hidden
+prompt or pipe it in, which keeps keys out of your shell history. Values live in
 `~/.booksmart/config.toml`, created `0600` and safe to hand-edit.
 
-Each setting resolves through one chain, highest first:
+Settings resolve through one chain, highest wins:
 
-1. `BOOKSMART_*` environment variables (e.g. `BOOKSMART_LLM_PROVIDER`) —
-   explicit targeting for scripts and one-offs.
+1. `BOOKSMART_*` environment variables (e.g. `BOOKSMART_LLM_PROVIDER`) — for
+   scripts and one-offs.
 2. `config.toml` — what `config set` writes.
-3. The vendors' conventional variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+3. The vendors' own variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
    `GEMINI_API_KEY`) — API keys only, so an already-exported key just works.
-4. Defaults (SQLite, `storage/` and embedded Qdrant under `~/.booksmart`).
+4. Defaults.
 
 `booksmart config list` shows every field's effective value and which layer it
-came from. Set `BOOKSMART_QDRANT_URL` (or `config set qdrant_url ...`) to use a
-Qdrant server instead of the embedded on-disk store; `BOOKSMART_HOME` moves the
-whole installation.
+came from. `BOOKSMART_QDRANT_URL` points at a Qdrant server instead of the
+embedded store; `BOOKSMART_HOME` moves the whole installation.
+
+Built on [`booksmart-core`](https://pypi.org/project/booksmart-core/), which is
+the same pipeline as a library if you would rather call it than run it.

@@ -15,7 +15,7 @@ dependencies = [
     "pydantic>=2.0",
     # pymupdf directly, never pymupdf4llm. That wrapper hard-pins pymupdf,
     # pymupdf_layout (Polyform Noncommercial) and tabulate — a noncommercial term
-    # in the dependency tree of an MIT-declared published package (#97). pymupdf
+    # in the dependency tree of an MIT-declared published package. pymupdf
     # itself has zero dependencies.
     "pymupdf>=1.24",
     # Minor-pinned: embedded (local-mode) Qdrant's on-disk format follows the
@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# BM25 sparse vectors for hybrid retrieval (issue #38). Optional because it is
+# BM25 sparse vectors for hybrid retrieval. Optional because it is
 # the heaviest thing core could depend on (onnxruntime, tokenizers) and a
 # consumer may bring its own sparse provider through the seam in sparse.py or
 # skip hybrid retrieval entirely. The CLI, which defaults to hybrid search,
