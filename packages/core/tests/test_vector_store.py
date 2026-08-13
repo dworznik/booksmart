@@ -1,4 +1,4 @@
-"""Unit tests for the model-locked vector collection (ADRs 0001 and 0003).
+"""Unit tests for the model-locked vector collection (ADRs 0001 and 0004).
 
 The collection records what it was created for — a dense embedding model and a
 sparse recipe — and rejects writes from any other, even at matching dimensions:

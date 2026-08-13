@@ -12,7 +12,7 @@ model plus the parameters it actually ran with. BM25's k, b and avg_len shape
 every term weight, and its language selects the stopword list and stemmer. Drift
 in any of them changes retrieval without changing anything an operator can
 observe — the same failure ADR 0001 refuses for dense models — so the collection
-locks against the whole recipe, not just the name (ADR 0003; see ``vectors.py``).
+locks against the whole recipe, not just the name (ADR 0004; see ``vectors.py``).
 Reading the parameters back off the constructed model, rather than off our own
 config, means a change in the library's own defaults is caught too.
 
