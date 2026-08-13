@@ -16,14 +16,29 @@ silently deletes the surrounding text rather than reporting it.
 
 ## Reading order is the spine, and only the spine
 
-`toc.ncx` (EPUB 2) and `nav.xhtml` (EPUB 3) are never opened. Spine order was
-measured correct in every pinned book, and one of them has an NCX pointing
-at a file absent from its own manifest. The spine is also the one construct both
-EPUB versions express identically, so ignoring navigation dissolves most of the
-2-vs-3 divergence instead of handling it.
+`toc.ncx` (EPUB 2) and `nav.xhtml` (EPUB 3) decide nothing about reading order.
+Spine order was measured correct in every pinned book, and one of them has an NCX
+pointing at a file absent from its own manifest. The spine is also the one
+construct both EPUB versions express identically, so ignoring navigation for this
+question dissolves most of the 2-vs-3 divergence instead of handling it.
 
 An unreadable spine item **fails the whole book**. A book with a silent hole looks
 complete, so nothing downstream would ever question it.
+
+## Structure is the book's own `<hN>`, or else what the container declares
+
+A different question, answered from different evidence. Where a book marks its
+headings up, that markup is the answer and navigation is not consulted at all: a
+fuzzy match against a nav document is not evidence enough to overrule a
+publisher's `<h2>`, and navigation routinely omits, renames and reorders what the
+book actually sets.
+
+Where a book carries **no `<h1>`-`<h6>` at all** — a conversion whose headings
+live in generated class names only — there is no semantic markup to overrule, and
+the NCX or nav document is the publisher's own statement of the chapter tree. It
+is read then, and only then. The objection that kept navigation out of reading
+order does not reach this: an entry pointing outside the manifest is a skippable
+entry, not a corrupt book, and what it costs is its own chapter.
 
 ## Code rules
 
@@ -67,6 +82,15 @@ from booksmart_core.parsing.blocks import Block, looks_like_code, to_gfm
 CONTAINER = "META-INF/container.xml"
 OCF_NS = "{urn:oasis:names:tc:opendocument:xmlns:container}"
 OPF_NS = "{http://www.idpf.org/2007/opf}"
+NCX_NS = "{http://www.daisy.org/z3986/2005/ncx/}"
+NCX_MEDIA_TYPE = "application/x-dtbncx+xml"
+
+# What a navigation entry can point at, and how long the longest of those is. An
+# entry anchors either the line carrying the chapter's title — which then *is*
+# the heading, so the title is not also left sitting in the prose beside it — or
+# the chapter itself, which the heading goes in front of. Past this many
+# characters it is the chapter.
+MAX_DECLARED_TITLE = 200
 
 # A spine document that is a picture of content rather than content. Four of the
 # pinned books ship a screenshot of every listing as an extra spine document —
@@ -327,10 +351,74 @@ def _code_body(element: Element, rule: CodeRule) -> str:
 # --- document -> blocks ----------------------------------------------------
 
 
-def _blocks_of(document: Element, rules: Sequence[CodeRule]) -> tuple[list[Block], dict[str, int]]:
+def _declared_anchors(
+    document: Element, points: Sequence["NavPoint"]
+) -> tuple[list["NavPoint"], dict[int, "NavPoint"], dict[int, "NavPoint"]]:
+    """Where in this document each declared entry's heading goes.
+
+    Three answers, because a navigation target is one of three things. An entry
+    naming a file and nothing finer heads the whole document. An entry anchoring
+    the line that carries the chapter's title makes *that line* the heading —
+    which is what stops the title being said twice, once as a heading and again
+    as the paragraph it was read from. An entry anchoring something chapter-sized
+    is a destination rather than a title, and the heading goes in front of it.
+
+    An entry whose anchor is not in the document is skipped. A stale id costs its
+    own chapter and nothing else.
+    """
+    leading: list["NavPoint"] = []
+    titles: dict[int, "NavPoint"] = {}
+    before: dict[int, "NavPoint"] = {}
+    by_id: dict[str, Element] = {}
+    for element in document.descendants():
+        identifier = element.attrs.get("id", "")
+        if identifier and identifier not in by_id:
+            by_id[identifier] = element
+    for point in points:
+        if not point.fragment:
+            leading.append(point)
+            continue
+        anchor = by_id.get(point.fragment)
+        if anchor is None:
+            continue
+        target = _title_element(anchor)
+        if target is None:
+            before.setdefault(id(anchor), point)
+        else:
+            titles.setdefault(id(target), point)
+    return leading, titles, before
+
+
+def _title_element(element: Element) -> Element | None:
+    """The element whose own text is the chapter's title, if one of these is.
+
+    The anchor itself where it carries the title. Its parent where the anchor is
+    an empty `<a id="…"/>` inside the line that does, which is what a conversion
+    emits — an id is cheaper to place than a heading. Nothing where what is
+    anchored is chapter-sized.
+    """
+    own = element.text().strip()
+    if own:
+        return element if len(own) <= MAX_DECLARED_TITLE else None
+    parent = element.parent
+    # `<body>` is never a title, however short the document is; and it is not a
+    # child of anything the walk descends through, so a heading put there is lost.
+    if parent is None or parent.tag in {"body", "html", "#document"}:
+        return None
+    text = parent.text().strip()
+    return parent if text and len(text) <= MAX_DECLARED_TITLE else None
+
+
+def _blocks_of(
+    document: Element, rules: Sequence[CodeRule], declared: Sequence["NavPoint"] = ()
+) -> tuple[list[Block], dict[str, int]]:
     blocks: list[Block] = []
     fired: dict[str, int] = {}
     pending: list[str] = []
+    leading, titles, before = _declared_anchors(document, declared)
+    blocks.extend(
+        Block(kind="heading", text=point.title, level=point.level) for point in leading
+    )
 
     def flush() -> None:
         text = "".join(pending)
@@ -363,6 +451,29 @@ def _blocks_of(document: Element, rules: Sequence[CodeRule]) -> tuple[list[Block
                         )
                     )
                 continue
+            # After the code rules, never before: a destination landing on a
+            # listing does not open a heading in the middle of it (ADR 0003).
+            declared_title = titles.get(id(child))
+            if declared_title is not None:
+                flush()
+                blocks.append(
+                    Block(
+                        kind="heading",
+                        text=_tidy(_inline(child)) or declared_title.title,
+                        level=declared_title.level,
+                    )
+                )
+                continue
+            declared_before = before.get(id(child))
+            if declared_before is not None:
+                flush()
+                blocks.append(
+                    Block(
+                        kind="heading",
+                        text=declared_before.title,
+                        level=declared_before.level,
+                    )
+                )
             level = HEADINGS.get(child.tag)
             if level is not None:
                 flush()
@@ -504,13 +615,20 @@ def _package_path(archive: zipfile.ZipFile) -> str:
     return unquote(str(rootfile.get("full-path")))
 
 
-def read_spine(archive: zipfile.ZipFile) -> tuple[SpineItem, ...]:
-    """The spine, resolved to zip member names, in reading order.
+@dataclass(frozen=True)
+class _Package:
+    """The package document, and where its hrefs are resolved from."""
 
-    A missing manifest entry or a member absent from the archive raises here
-    rather than being skipped: a book with a silent hole looks complete, and
-    nothing downstream would question it.
-    """
+    root: "ElementTree.Element"
+    path: str
+    base: str
+
+    def member(self, href: str) -> str:
+        """A manifest href as a zip member name."""
+        return posixpath.normpath(posixpath.join(self.base, href)) if self.base else href
+
+
+def _read_package(archive: zipfile.ZipFile) -> _Package:
     package_path = _package_path(archive)
     try:
         raw_package = archive.read(package_path)
@@ -518,18 +636,32 @@ def read_spine(archive: zipfile.ZipFile) -> tuple[SpineItem, ...]:
         raise ParseFailure(
             f"the package document {package_path!r} named by {CONTAINER} is not in the archive"
         ) from exc
-    package = _xml(raw_package, package_path)
-    base = posixpath.dirname(package_path)
+    return _Package(
+        root=_xml(raw_package, package_path),
+        path=package_path,
+        base=posixpath.dirname(package_path),
+    )
+
+
+def read_spine(archive: zipfile.ZipFile) -> tuple[SpineItem, ...]:
+    """The spine, resolved to zip member names, in reading order.
+
+    A missing manifest entry or a member absent from the archive raises here
+    rather than being skipped: a book with a silent hole looks complete, and
+    nothing downstream would question it.
+    """
+    package = _read_package(archive)
+    package_path = package.path
 
     manifest = {
         item.get("id"): unquote(item.get("href") or "")
-        for item in package.iter(f"{OPF_NS}item")
+        for item in package.root.iter(f"{OPF_NS}item")
         if item.get("id")
     }
     members = set(archive.namelist())
 
     items: list[SpineItem] = []
-    for reference in package.iter(f"{OPF_NS}itemref"):
+    for reference in package.root.iter(f"{OPF_NS}itemref"):
         idref = reference.get("idref") or ""
         href = manifest.get(idref)
         if not href:
@@ -537,7 +669,7 @@ def read_spine(archive: zipfile.ZipFile) -> tuple[SpineItem, ...]:
                 f"spine item {idref!r} has no entry in the manifest, so the book has a "
                 f"hole where a chapter should be"
             )
-        member = posixpath.normpath(posixpath.join(base, href)) if base else href
+        member = package.member(href)
         if member not in members:
             raise ParseFailure(
                 f"spine item {idref!r} names {member!r}, which is not in the archive"
@@ -546,6 +678,134 @@ def read_spine(archive: zipfile.ZipFile) -> tuple[SpineItem, ...]:
     if not items:
         raise ParseFailure(f"{package_path} declares an empty spine")
     return tuple(items)
+
+
+@dataclass(frozen=True)
+class NavPoint:
+    """One entry of the chapter tree the container declares."""
+
+    level: int
+    title: str
+    href: str  # a zip member name
+    fragment: str  # an element id within it, or "" for the document itself
+
+
+def read_navigation(archive: zipfile.ZipFile) -> tuple[NavPoint, ...]:
+    """The chapter tree the container declares, in document order.
+
+    EPUB 3 says it in a nav document and EPUB 2 in an NCX; a book may carry
+    either or both, and the two say the same thing differently, so both are read.
+    Nesting is the level, which is the whole reason to prefer this over a flat
+    list of destinations.
+
+    Anything malformed here yields nothing rather than failing the book. This is
+    consulted only where the book has no headings of its own, so the worst case
+    is the answer that was already going to be given.
+    """
+    package = _read_package(archive)
+    members = set(archive.namelist())
+    for member, kind in _navigation_documents(package, members):
+        try:
+            points = (
+                _ncx_points(_xml(archive.read(member), member), posixpath.dirname(member))
+                if kind == "ncx"
+                else _nav_points(read_text(archive, member), posixpath.dirname(member))
+            )
+        except ParseFailure:
+            continue
+        if points:
+            return points
+    return ()
+
+
+def _navigation_documents(package: _Package, members: set[str]) -> list[tuple[str, str]]:
+    """The container's navigation documents, EPUB 3's first.
+
+    Three ways of declaring one, because books use all three: `properties="nav"`
+    on a manifest item (EPUB 3), the `toc` attribute of the spine (EPUB 2), and
+    the NCX media type on its own for a book that declares neither.
+    """
+    spine = package.root.find(f"{OPF_NS}spine")
+    ncx_id = (spine.get("toc") or "") if spine is not None else ""
+    nav = ncx = ""
+    for item in package.root.iter(f"{OPF_NS}item"):
+        member = package.member(unquote(item.get("href") or ""))
+        if member not in members:
+            continue
+        if "nav" in (item.get("properties") or "").split():
+            nav = member
+        elif item.get("media-type") == NCX_MEDIA_TYPE or (ncx_id and item.get("id") == ncx_id):
+            ncx = member
+    return [
+        (member, kind) for member, kind in ((nav, "nav"), (ncx, "ncx")) if member
+    ]
+
+
+def _navigation_point(level: int, title: str, source: str, base: str) -> NavPoint:
+    href, _, fragment = source.partition("#")
+    member = posixpath.normpath(posixpath.join(base, href)) if base and href else href
+    return NavPoint(
+        level=min(max(level, 1), 6), title=title.strip(), href=member, fragment=fragment
+    )
+
+
+def _ncx_points(root: "ElementTree.Element", base: str) -> tuple[NavPoint, ...]:
+    """An EPUB 2 `navMap`, whose nesting is `navPoint` inside `navPoint`."""
+
+    def walk(parent: "ElementTree.Element", level: int) -> Iterator[NavPoint]:
+        for point in parent.findall(f"{NCX_NS}navPoint"):
+            label = point.find(f"{NCX_NS}navLabel/{NCX_NS}text")
+            content = point.find(f"{NCX_NS}content")
+            title = (label.text or "").strip() if label is not None else ""
+            source = unquote(content.get("src") or "") if content is not None else ""
+            if title and source:
+                yield _navigation_point(level, title, source, base)
+            yield from walk(point, level + 1)
+
+    nav_map = root.find(f"{NCX_NS}navMap")
+    return tuple(walk(nav_map, 1)) if nav_map is not None else ()
+
+
+def _nav_points(markup: str, base: str) -> tuple[NavPoint, ...]:
+    """An EPUB 3 nav document, whose nesting is `<ol>` inside `<li>`.
+
+    Read through the same tolerant parser content documents get: a nav document
+    is a content document, and one book's is no better formed than its chapters.
+    """
+    document = read_document(markup)
+    toc = next(
+        (
+            element
+            for element in document.descendants()
+            if element.tag == "nav"
+            and (
+                "toc" in element.attrs.get("epub:type", "").split()
+                or element.attrs.get("role") == "doc-toc"
+            )
+        ),
+        None,
+    )
+    if toc is None:
+        return ()
+    points: list[NavPoint] = []
+
+    def walk(element: Element, level: int) -> None:
+        for child in element.children:
+            if not isinstance(child, Element):
+                continue
+            if child.tag == "ol":
+                walk(child, level + 1)
+                continue
+            source = child.attrs.get("href", "") if child.tag == "a" else ""
+            if source:
+                title = _tidy(child.text()).strip()
+                if title:
+                    points.append(_navigation_point(level, title, unquote(source), base))
+                continue
+            walk(child, level)
+
+    walk(toc, 0)
+    return tuple(points)
 
 
 def read_document(markup: str) -> Element:
@@ -576,6 +836,23 @@ def read_member(archive: zipfile.ZipFile, href: str) -> Element:
     return read_document(read_text(archive, href))
 
 
+def _by_member(
+    points: Sequence[NavPoint], spine: Sequence[SpineItem]
+) -> dict[str, tuple[NavPoint, ...]]:
+    """Declared entries grouped by the spine document they point into.
+
+    An entry naming a document the spine does not carry is dropped here — the one
+    thing that kept navigation out of reading order, reduced to what it actually
+    is once the question is structure: an entry that names nothing readable.
+    """
+    order = {item.href for item in spine}
+    grouped: dict[str, list[NavPoint]] = {}
+    for point in points:
+        if point.href in order:
+            grouped.setdefault(point.href, []).append(point)
+    return {href: tuple(found) for href, found in grouped.items()}
+
+
 def is_furniture(document: Element) -> bool:
     """Whether a spine document is a picture of content rather than content."""
     has_image = any(child.tag in {"img", "image"} for child in document.descendants())
@@ -586,22 +863,22 @@ class EpubExtractor:
     route = "epub"
 
     def extract(self, path: Path, log: Callable[[str], None]) -> ParseResult:
-        blocks: list[Block] = []
-        fired: dict[str, int] = {}
-        skipped = 0
-
         with open_container(path) as archive:
             spine = read_spine(archive)
             log(f"epub: {len(spine)} spine document(s)")
-            for item in spine:
-                document = read_member(archive, item.href)
-                if is_furniture(document):
-                    skipped += 1
-                    continue
-                found, counts = _blocks_of(document, CODE_RULES)
-                blocks.extend(found)
-                for name, count in counts.items():
-                    fired[name] = fired.get(name, 0) + count
+            blocks, fired, skipped = self._read(archive, spine, {})
+            if not any(block.kind == "heading" for block in blocks):
+                # Only now, and only because there is nothing to overrule. The
+                # second pass costs a re-parse of the spine, which a book with no
+                # `<hN>` in it is rare enough to be worth.
+                declared = _by_member(read_navigation(archive), spine)
+                if declared:
+                    log(
+                        f"epub: no <h1>-<h6> in any spine document; taking the heading set "
+                        f"from the {sum(len(points) for points in declared.values())} "
+                        f"entries the container declares"
+                    )
+                    blocks, fired, skipped = self._read(archive, spine, declared)
 
         if skipped:
             log(f"epub: skipped {skipped} image-only spine document(s)")
@@ -620,6 +897,27 @@ class EpubExtractor:
                 skipped_documents=skipped,
             ),
         )
+
+    @staticmethod
+    def _read(
+        archive: zipfile.ZipFile,
+        spine: Sequence[SpineItem],
+        declared: Mapping[str, Sequence[NavPoint]],
+    ) -> tuple[list[Block], dict[str, int], int]:
+        """Every spine document, in order, as blocks."""
+        blocks: list[Block] = []
+        fired: dict[str, int] = {}
+        skipped = 0
+        for item in spine:
+            document = read_member(archive, item.href)
+            if is_furniture(document):
+                skipped += 1
+                continue
+            found, counts = _blocks_of(document, CODE_RULES, declared.get(item.href, ()))
+            blocks.extend(found)
+            for name, count in counts.items():
+                fired[name] = fired.get(name, 0) + count
+        return blocks, fired, skipped
 
     @staticmethod
     def _code_decline(blocks: Sequence[Block], fired: Mapping[str, int]) -> tuple[str, ...]:
@@ -642,19 +940,21 @@ class EpubExtractor:
 
     @staticmethod
     def _heading_decline(blocks: Sequence[Block]) -> tuple[str, ...]:
-        """Say so when the book declares no headings at all.
+        """Say so when neither the book nor its container declares any heading.
 
         Structure and code rest on different evidence, so they decline
         independently — a book can have perfectly good `<hN>` and no visible code,
         or the reverse. This is the reverse: one pinned book is a Calibre build
         with no semantic heading anywhere, only generated `p` classes that happen
-        to be typeset large. Inferring headings from those means guessing which of
-        a build tool's numbered classes is a chapter, per book, and a wrong guess
-        invents a chapter tree that reads as authoritative.
+        to be typeset large. What is left once its navigation has also been asked
+        is a book whose structure could only be *guessed* — which of a build
+        tool's numbered classes is a chapter, per book — and a wrong guess invents
+        a chapter tree that reads as authoritative.
         """
         if any(block.kind == "heading" for block in blocks):
             return ()
         return (
-            "no <h1>-<h6> element in any spine document, so no structure is claimed; "
-            "this build carries its headings in generated class names only",
+            "no <h1>-<h6> element in any spine document and no navigation document "
+            "declaring a chapter tree, so no structure is claimed; this build carries "
+            "its headings in generated class names only",
         )

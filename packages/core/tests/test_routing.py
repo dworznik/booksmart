@@ -8,6 +8,7 @@ records the routing decision, and that a scan really does come back as text.
 
     "1"  marker | pymupdf | ocr
     "2"  epub | pdf | pdf-ocr
+    "3"  epub | pdf | pdf-ocr, with the heading set taken from the container
 
 The OCR tests need tesseract on the machine (present in CI and the image).
 """
@@ -121,11 +122,13 @@ class TestWhatParserUsedHolds:
         parsed = storage.resolve(str(run["output_path"]))
         assert "Deep modules hide complexity" in parsed.read_text(encoding="utf-8")
 
-    def test_the_route_vocabulary_belongs_to_extraction_version_two(self) -> None:
+    def test_the_route_vocabulary_outlives_the_stamp_that_introduced_it(self) -> None:
         """A row's `parser_used` is only readable beside its version stamp. Rows
         written under "1" say `pymupdf`, and that is still a true statement about
-        what produced them — which is why there is no migration."""
-        assert EXTRACTION_VERSION == "2"
+        what produced them — which is why there is no migration. "3" keeps "2"'s
+        vocabulary and changes what a heading is, so the stamp moves and the route
+        names do not."""
+        assert EXTRACTION_VERSION == "3"
 
 
 class TestParseLogs:

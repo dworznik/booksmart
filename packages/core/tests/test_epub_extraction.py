@@ -35,6 +35,41 @@ CONTAINER = (
 )
 
 
+# A declared table of contents, as `(title, href, children)` — the one shape both
+# an EPUB 2 NCX and an EPUB 3 nav document express, nesting and all.
+Toc = list[tuple[str, str, list]]
+
+
+def _ncx(toc: Toc) -> str:
+    counter = iter(range(1, 1000))
+    def points(entries: Toc) -> str:
+        return "".join(
+            f'<navPoint id="p{next(counter)}"><navLabel><text>{title}</text></navLabel>'
+            f'<content src="{href}"/>{points(children)}</navPoint>'
+            for title, href, children in entries
+        )
+
+    return (
+        '<?xml version="1.0"?>'
+        '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
+        f"<navMap>{points(toc)}</navMap></ncx>"
+    )
+
+
+def _nav_document(toc: Toc) -> str:
+    def items(entries: Toc) -> str:
+        return "<ol>" + "".join(
+            f'<li><a href="{href}">{title}</a>{items(children) if children else ""}</li>'
+            for title, href, children in entries
+        ) + "</ol>"
+
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
+        f'<body><nav epub:type="toc">{items(toc)}</nav></body></html>'
+    )
+
+
 def build_epub(
     path: Path,
     documents: dict[str, str],
@@ -42,15 +77,26 @@ def build_epub(
     spine: list[str] | None = None,
     manifest: dict[str, str] | None = None,
     omit: frozenset[str] = frozenset(),
+    ncx: Toc | None = None,
+    nav: Toc | None = None,
 ) -> Path:
     """An EPUB from `{filename: body html}`.
 
     ``manifest`` and ``omit`` exist for the failure cases: a spine referencing an
     id the manifest never declares, and a manifest entry whose file is not in the
-    zip.
+    zip. ``ncx`` and ``nav`` declare a table of contents the EPUB 2 way and the
+    EPUB 3 way respectively — the same tree, said twice over, which is what a
+    reader of this route has to cope with.
     """
     items = manifest or {f"id{index}": name for index, name in enumerate(documents)}
     order = spine if spine is not None else list(items)
+    declarations = ""
+    if ncx is not None:
+        declarations += '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+    if nav is not None:
+        declarations += (
+            '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
+        )
     opf = (
         '<?xml version="1.0"?>'
         '<package version="3.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="uid">'
@@ -61,7 +107,9 @@ def build_epub(
             f'<item id="{item_id}" href="{href}" media-type="application/xhtml+xml"/>'
             for item_id, href in items.items()
         )
-        + "</manifest><spine>"
+        + declarations
+        + "</manifest>"
+        + ('<spine toc="ncx">' if ncx is not None else "<spine>")
         + "".join(f'<itemref idref="{item_id}"/>' for item_id in order)
         + "</spine></package>"
     )
@@ -69,6 +117,10 @@ def build_epub(
         archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
         archive.writestr("META-INF/container.xml", CONTAINER)
         archive.writestr("OEBPS/content.opf", opf)
+        if ncx is not None:
+            archive.writestr("OEBPS/toc.ncx", _ncx(ncx))
+        if nav is not None:
+            archive.writestr("OEBPS/nav.xhtml", _nav_document(nav))
         for name, body in documents.items():
             if name in omit:
                 continue
@@ -85,6 +137,10 @@ def build_epub(
 def extract(path: Path) -> tuple[str, object]:
     result = EpubExtractor().extract(path, lambda _: None)
     return result.markdown, result.report
+
+
+def heading_lines(markdown: str) -> list[str]:
+    return [line for line in markdown.split("\n") if line.startswith("#")]
 
 
 def fence_bodies(markdown: str) -> list[str]:
@@ -127,23 +183,26 @@ class TestTheSpineIsTheReadingOrder:
 
         assert markdown.index("first") < markdown.index("second") < markdown.index("third")
 
-    def test_navigation_documents_are_never_opened(self, tmp_path: Path) -> None:
-        """`toc.ncx` and `nav.xhtml` are ignored outright: one pinned book's NCX
-        points at a file absent from its own manifest, and the spine is the one
-        construct EPUB 2 and 3 express identically."""
+    def test_navigation_is_not_the_reading_order(self, tmp_path: Path) -> None:
+        """`toc.ncx` and `nav.xhtml` are never read as content and never decide
+        what order the book is read in: one pinned book's NCX points at a file
+        absent from its own manifest, and the spine is the one construct EPUB 2
+        and 3 express identically. What navigation is asked is a *different*
+        question — what the chapters are — and only where nothing else answers
+        it."""
         path = build_epub(
             tmp_path / "b.epub",
-            {"a.xhtml": "<p>body text</p>"},
+            {"a.xhtml": "<h1>A Real Heading</h1><p>body text</p>"},
             manifest={"a": "a.xhtml"},
             spine=["a"],
+            ncx=[("NAVIGATION", "a.xhtml", [])],
+            nav=[("ALSO NAVIGATION", "a.xhtml", [])],
         )
-        with zipfile.ZipFile(path, "a") as archive:
-            archive.writestr("OEBPS/nav.xhtml", "<html><body><h1>NAVIGATION</h1></body></html>")
-            archive.writestr("OEBPS/toc.ncx", "<ncx><text>ALSO NAVIGATION</text></ncx>")
 
         markdown, _ = extract(path)
 
         assert "NAVIGATION" not in markdown
+        assert heading_lines(markdown) == ["# A Real Heading"]
 
     def test_a_spine_item_missing_from_the_manifest_fails_the_book(self, tmp_path: Path) -> None:
         """A book with a silent hole looks complete, so nothing downstream would
@@ -271,6 +330,170 @@ class TestHeadings:
         markdown, _ = extract(path)
 
         assert "## Modules Should Be Deep" in markdown
+
+
+class TestTheDeclaredNavigation:
+    """A conversion can carry zero `<h1>`-`<h6>` and still declare a complete
+    chapter tree in its NCX or its nav document. Nothing is being overruled there
+    — there is no semantic markup to overrule — so the publisher's own statement
+    of the structure is read rather than the book being reported as structureless.
+    """
+
+    CALIBRE = (
+        '<p class="c5"><a id="c1"/>Chapter One</p><p class="c1">First chapter prose.</p>'
+        '<p class="c6"><a id="s1"/>A Section</p><p class="c1">Section prose.</p>'
+        '<p class="c5"><a id="c2"/>Chapter Two</p><p class="c1">Second chapter prose.</p>'
+    )
+
+    def test_a_book_with_no_authored_headings_takes_its_tree_from_the_ncx(
+        self, tmp_path: Path
+    ) -> None:
+        path = build_epub(
+            tmp_path / "b.epub",
+            {"a.xhtml": self.CALIBRE},
+            ncx=[
+                ("Chapter One", "a.xhtml#c1", []),
+                ("Chapter Two", "a.xhtml#c2", []),
+            ],
+        )
+
+        markdown, report = extract(path)
+
+        assert heading_lines(markdown) == ["# Chapter One", "# Chapter Two"]
+        assert not any("no <h1>-<h6>" in reason for reason in report.declines)  # type: ignore[attr-defined]
+
+    def test_the_declared_title_is_not_also_left_in_the_prose(
+        self, tmp_path: Path
+    ) -> None:
+        """The line that carried the title becomes the heading. Emitting the
+        heading beside it would say the chapter's name twice."""
+        path = build_epub(
+            tmp_path / "b.epub",
+            {"a.xhtml": self.CALIBRE},
+            ncx=[("Chapter One", "a.xhtml#c1", [])],
+        )
+
+        markdown, _ = extract(path)
+
+        assert markdown.count("Chapter One") == 1
+
+    def test_nesting_in_the_navigation_is_the_heading_level(self, tmp_path: Path) -> None:
+        path = build_epub(
+            tmp_path / "b.epub",
+            {"a.xhtml": self.CALIBRE},
+            ncx=[
+                ("Chapter One", "a.xhtml#c1", [("A Section", "a.xhtml#s1", [])]),
+                ("Chapter Two", "a.xhtml#c2", []),
+            ],
+        )
+
+        markdown, _ = extract(path)
+
+        assert heading_lines(markdown) == ["# Chapter One", "## A Section", "# Chapter Two"]
+        chapters = detect_structure(markdown)
+        assert [chapter.title for chapter in chapters] == ["Chapter One", "Chapter Two"]
+        assert [section.title for section in chapters[0].sections] == ["A Section"]
+
+    def test_an_epub_three_nav_document_declares_the_same_tree(
+        self, tmp_path: Path
+    ) -> None:
+        """The two versions say it differently and mean the same thing, so this
+        route has to read both — an EPUB 3 book need carry no NCX at all."""
+        path = build_epub(
+            tmp_path / "b.epub",
+            {"a.xhtml": self.CALIBRE},
+            nav=[
+                ("Chapter One", "a.xhtml#c1", [("A Section", "a.xhtml#s1", [])]),
+                ("Chapter Two", "a.xhtml#c2", []),
+            ],
+        )
+
+        markdown, _ = extract(path)
+
+        assert heading_lines(markdown) == ["# Chapter One", "## A Section", "# Chapter Two"]
+
+    def test_an_entry_with_no_fragment_heads_its_document(self, tmp_path: Path) -> None:
+        """A book split one chapter to a file names the file and nothing finer."""
+        path = build_epub(
+            tmp_path / "b.epub",
+            {"a.xhtml": "<p>First chapter prose.</p>", "b.xhtml": "<p>Second chapter prose.</p>"},
+            manifest={"a": "a.xhtml", "b": "b.xhtml"},
+            spine=["a", "b"],
+            ncx=[("Chapter One", "a.xhtml", []), ("Chapter Two", "b.xhtml", [])],
+        )
+
+        markdown, _ = extract(path)
+
+        assert heading_lines(markdown) == ["# Chapter One", "# Chapter Two"]
+
+    def test_an_entry_naming_a_file_that_is_not_there_is_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        """The failure that kept navigation out of *reading order* is a skippable
+        entry here, not a corrupt book: what it costs is its own chapter."""
+        path = build_epub(
+            tmp_path / "b.epub",
+            {"a.xhtml": self.CALIBRE},
+            ncx=[
+                ("A Chapter That Is Not In The Book", "ghost.xhtml", []),
+                ("Chapter One", "a.xhtml#c1", []),
+            ],
+        )
+
+        markdown, _ = extract(path)
+
+        assert heading_lines(markdown) == ["# Chapter One"]
+
+    def test_an_entry_whose_anchor_is_not_in_the_document_is_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        path = build_epub(
+            tmp_path / "b.epub",
+            {"a.xhtml": self.CALIBRE},
+            ncx=[("Chapter One", "a.xhtml#c1", []), ("Chapter Nine", "a.xhtml#c9", [])],
+        )
+
+        markdown, _ = extract(path)
+
+        assert heading_lines(markdown) == ["# Chapter One"]
+
+    def test_authored_headings_are_never_overruled_by_navigation(
+        self, tmp_path: Path
+    ) -> None:
+        """Where a book marks its own headings up, that markup is the answer. A
+        fuzzy match against a nav document is not evidence enough to overrule a
+        publisher's `<h2>`, and navigation routinely omits, renames and reorders
+        what the book actually sets."""
+        path = build_epub(
+            tmp_path / "b.epub",
+            {"a.xhtml": "<h2>Chapter One</h2><p>prose</p><h2>Chapter Two</h2><p>prose</p>"},
+            ncx=[("A Different Name Entirely", "a.xhtml", [])],
+        )
+
+        markdown, _ = extract(path)
+
+        assert heading_lines(markdown) == ["## Chapter One", "## Chapter Two"]
+
+    def test_a_book_declaring_nothing_anywhere_still_declines(
+        self, tmp_path: Path
+    ) -> None:
+        """Unchanged where there is no navigation to read: guessing which of a
+        build tool's numbered classes is a chapter invents a tree that reads as
+        authoritative."""
+        path = build_epub(tmp_path / "b.epub", {"a.xhtml": self.CALIBRE})
+
+        markdown, report = extract(path)
+
+        assert detect_structure(markdown) == []
+        assert any("no <h1>-<h6> element" in reason for reason in report.declines)  # type: ignore[attr-defined]
+
+    def test_an_empty_navigation_declares_nothing(self, tmp_path: Path) -> None:
+        path = build_epub(tmp_path / "b.epub", {"a.xhtml": self.CALIBRE}, ncx=[])
+
+        markdown, report = extract(path)
+
+        assert detect_structure(markdown) == []
+        assert any("no <h1>-<h6> element" in reason for reason in report.declines)  # type: ignore[attr-defined]
 
 
 class TestTheCodeRules:
