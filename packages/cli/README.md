@@ -32,7 +32,7 @@ embeddings. Set them once; they persist:
 ```console
 $ booksmart config set anthropic_api_key   # hidden prompt, or pipe the key in
 $ booksmart config set openai_api_key
-$ booksmart add ./clean-code.pdf --title "Clean Code" --author "Robert C. Martin"
+$ booksmart add ./a-book.pdf --title "A Book About Software" --author "A. N. Author"
 $ booksmart ingest <book-id>
 $ booksmart search all "how do deep modules reduce complexity"
 ```

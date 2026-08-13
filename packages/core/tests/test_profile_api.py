@@ -17,8 +17,8 @@ from .conftest import StubLLMProvider, get_run, latest_profile, store_book
 from .test_structure_api import ingest, make_structured_pdf_bytes
 
 BOOK_FIELDS: dict[str, object] = {
-    "title": "A Philosophy of Software Design",
-    "author": "John Ousterhout",
+    "title": "A Book About Software Design",
+    "author": "A. N. Author",
     "edition": "2nd",
     "publication_year": 2021,
     "primary_topic": "software design",
@@ -78,8 +78,8 @@ class TestProfileGenerationStage:
         assert len(profile_calls) == 1
         prompt, system = profile_calls[0]
         assert system  # the stage identifies itself to the model
-        assert "A Philosophy of Software Design" in prompt
-        assert "John Ousterhout" in prompt
+        assert "A Book About Software Design" in prompt
+        assert "A. N. Author" in prompt
         assert "software design" in prompt  # hint
         assert "Focus on the deep-modules argument" in prompt  # hint
         assert "Chapter One: Modules" in prompt  # detected structure

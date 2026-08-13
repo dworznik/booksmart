@@ -253,10 +253,10 @@ class TestMatterClassification:
         ]
 
     def test_leading_title_page_heading_before_front_matter_is_front_matter(self) -> None:
-        markdown = "# A Philosophy of Software Design\n# Preface\n# Chapter 1: Ideas\n"
+        markdown = "# A Book About Software Design\n# Preface\n# Chapter 1: Ideas\n"
 
         assert kinds(markdown) == [
-            ("A Philosophy of Software Design", "front_matter"),
+            ("A Book About Software Design", "front_matter"),
             ("Preface", "front_matter"),
             ("Chapter 1: Ideas", "chapter"),
         ]
@@ -280,11 +280,11 @@ class TestMatterClassification:
 
 class TestRealisticEpubOutline:
     def test_philosophy_style_epub_yields_clean_chapter_list(self) -> None:
-        """The regression observed on A Philosophy of Software Design: bold
-        headings, number/title pairs, and front matter inflating 21 chapters
-        to 49 detected ones."""
+        """A regression observed on a real EPUB: bold headings, number/title
+        pairs, and front matter inflating a couple of dozen chapters into
+        roughly twice as many detected ones."""
         parts = [
-            "# **A Philosophy of Software Design**",
+            "# **A Book About Software Design**",
             "# **Copyright**",
             "# **Contents**",
             "# **Preface**",
@@ -303,7 +303,7 @@ class TestRealisticEpubOutline:
         chapters = detect_structure(markdown)
 
         assert [(c.title, c.kind) for c in chapters] == [
-            ("A Philosophy of Software Design", "front_matter"),
+            ("A Book About Software Design", "front_matter"),
             ("Copyright", "front_matter"),
             ("Contents", "front_matter"),
             ("Preface", "front_matter"),

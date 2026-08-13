@@ -169,8 +169,8 @@ def corpus(
         store_book(
             session_factory,
             storage,
-            title="A Philosophy of Software Design",
-            author="Ousterhout",
+            title="A Book About Software Design",
+            author="Author",
             filename="apsd.pdf",
             content=b"%PDF-1.4 a",
         )

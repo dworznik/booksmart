@@ -6,8 +6,8 @@ hybrid-search work could not settle from primary sources — does fusing BM25 wi
 dense retrieval actually beat dense alone on booksmart's own shape of corpus,
 which is chapter/section summaries and knowledge objects rather than raw prose?
 
-The corpus stands in for *A Philosophy of Software Design*, the book the test
-suite has always used as its example. It is written by hand rather than ingested
+The corpus stands in for one technical book, at the shape and size the test
+suite uses throughout. It is written by hand rather than ingested
 from the PDF, deliberately: an eval needs to know which record *should* answer
 each query, and that ground truth has to be authored, not inferred. Records are
 sized and shaped like the ones the summaries and extraction Stages emit.
