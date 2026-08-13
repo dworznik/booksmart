@@ -36,20 +36,30 @@ They are kept because the probe reproduces (see the PR), and they are the reason
 tier 2 fires *only* when tier 1 found nothing — a fitted rule that never runs on
 the books a generic rule already handles.
 
-## Headings: what the document declares, then what it typesets
+## Headings: what the document declares, and what it typesets, together
 
 A PDF's bookmark outline is the publisher's own statement of the book's chapter
-tree, and it is read **first**. Where a document carries one that locates itself
-on the page, that outline *is* the heading set: nothing else becomes a heading,
-because a running head set large on every page is not a chapter and the outline
-is what says so.
+tree, and every entry that can be found on the page it names is a heading at the
+level the publisher gave it.
 
-Where there is no outline — or where too few of its entries can be found on the
-pages they name for it to be a statement about this document — the size ladder
-answers instead. Size alone is what `pymupdf4llm` did and it over-promotes, so
-the ladder is size plus three things: a heading is a **line** rather than a
-paragraph, it is never inside a code run, and a size only becomes one of the six
-levels if enough of the document is actually set in it.
+That is not the whole heading set, because an outline is usually not the whole
+tree: most list chapters only. So the size ladder runs over the document beside
+it and supplies everything underneath. Size alone is what `pymupdf4llm` did and
+it over-promotes, so the ladder is size plus three things — a heading is a
+**line** rather than a paragraph, it is never inside a code run, and a size only
+becomes one of the six levels if enough of the document is actually set in it.
+
+The two meet at one rule. **The outline says which rung of the ladder the
+chapters are on, and nothing above that rung is a heading unless the outline
+names it.** A running head, a part number and a colophon are all set larger than
+the chapter openers; the publisher's own outline is what says they are not
+chapters, and it is also what stops one of them hijacking
+`detect_structure`'s "smallest level present" for the whole book. Below that rung
+the ladder is left alone: a section the outline never mentions is still a
+section, and a chapter it omits is still a chapter.
+
+Where there is no outline, or none of it can be located, the ladder answers alone
+and every rung it found is kept — which is what it did before any of this.
 
 Heading detection **declines independently of code detection**: the two rest on
 different evidence — family separates code from prose, structure comes from the
@@ -61,7 +71,7 @@ import re
 import statistics
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pymupdf
@@ -69,6 +79,7 @@ import pymupdf
 from booksmart_core.parsing.blocks import Block, to_gfm
 from booksmart_core.parsing.contract import ExtractorReport, ParseResult
 from booksmart_core.parsing.mupdf import quiet_mupdf
+from booksmart_core.titles import normalise, titles_match
 
 MONO_FLAG = 1 << 3
 ITALIC_FLAG = 1 << 1
@@ -127,9 +138,6 @@ MIN_HEADING_SHARE = 0.02
 # populations into one level that clears the floor between them.
 SIZE_TOLERANCE_SHARE = 0.02
 MAX_SIZE_TOLERANCE = 0.3
-# How much of an outline has to be found on the pages it names before it is read
-# as a statement about *this* document rather than a stale one.
-MIN_OUTLINE_MATCH = 0.5
 # How far short of its block's measure a line may fall and still read as wrapped
 # prose. About one short word: a ragged-right setting varies by a few ems, while a
 # table row or a ToC entry stops far shorter than that, line after line.
@@ -292,19 +300,6 @@ def read_outline(document: pymupdf.Document) -> tuple[OutlineEntry, ...]:
     return tuple(entries)
 
 
-_NOT_KEYABLE = re.compile(r"[^0-9a-z]+")
-
-
-def _key(text: str) -> str:
-    """A title reduced to what two spellings of it have in common.
-
-    An outline entry and the line it points at agree on the words and disagree on
-    everything else: the entry says "Chapter 3: Modules", the page sets "Chapter
-    3   Modules" with a decorative rule and letter spacing.
-    """
-    return _NOT_KEYABLE.sub(" ", text.lower()).strip()
-
-
 def _mark_declared(entries: Sequence[OutlineEntry], lines: Sequence[Line]) -> int:
     """Mark the lines the outline declares to be headings; count the entries found.
 
@@ -323,7 +318,7 @@ def _mark_declared(entries: Sequence[OutlineEntry], lines: Sequence[Line]) -> in
     for line in lines:
         if index >= len(entries):
             break
-        text = _key(line.text)
+        text = normalise(line.text)
         if not text:
             continue
         if remainder:
@@ -346,7 +341,11 @@ def _mark_declared(entries: Sequence[OutlineEntry], lines: Sequence[Line]) -> in
         entry = entries[index]
         line.declared_level = entry.level
         found += 1
-        remainder = _key(entry.title)[len(text) :].strip()
+        # Only where the line is the *front* of the title is there a rest of it to
+        # look for; `titles_match` also accepts a line that says more than the
+        # entry does, and that line has already said all of it.
+        title = normalise(entry.title)
+        remainder = title[len(text) :].strip() if title.startswith(text) else ""
         if not remainder:
             index += 1
     return found
@@ -357,38 +356,52 @@ def _entry_at(
 ) -> int | None:
     """The first entry from ``start`` that this line could be, or nothing.
 
-    Bounded by the page: entries are in document order, so one pointing past this
-    page has not been reached yet and this line is not it.
+    The discipline `titles_match` asks its callers for. Containment either way is
+    a loose test on its own — a one-word entry is contained in a great deal of
+    prose — and what tightens it here is *where* it is asked: only from the entry
+    the search has reached, and only on the page that entry names.
     """
     for index in range(start, len(entries)):
         entry = entries[index]
+        # Entries are in document order, so one pointing past this page has not
+        # been reached yet and this line is not it.
         if entry.page > page:
             return None
-        key = _key(entry.title)
-        if key == text or key.startswith(f"{text} "):
+        if titles_match(text, entry.title):
             return index
     return None
 
 
-def read_declared_headings(document: pymupdf.Document, lines: Sequence[Line]) -> int:
-    """Take the heading set from the document's outline, if it has a usable one.
+@dataclass(frozen=True)
+class OutlineReport:
+    """What the outline said, and how much of it was found on the page.
 
-    An outline most of whose entries cannot be found on the page it names is
-    stale, or titled in something other than the text on the page. Acting on the
-    fraction that did match would report five chapters for a book that has fifty
-    — a worse answer than the size ladder, and one nothing downstream could tell
-    from a book that really is five chapters long. So it is all or nothing, and
-    the marks are taken back off when it is nothing.
+    Three states, and the middle one is an alarm rather than a fact about the
+    book: an outline present with nothing located means the heading rule or the
+    matcher is broken, and it must not read the same as a book that simply
+    carries no outline.
+    """
+
+    entries: int
+    located: int
+
+    def __str__(self) -> str:
+        if not self.entries:
+            return "toc: absent"
+        return f"toc: {self.located}/{self.entries} matched"
+
+
+def read_declared_headings(
+    document: pymupdf.Document, lines: Sequence[Line]
+) -> OutlineReport:
+    """Mark every line the document's own outline names, and say how it went.
+
+    Nothing is all-or-nothing here. An entry that locates itself is a heading the
+    publisher vouched for; one that does not costs its own chapter and nothing
+    else, because the size ladder still runs over the whole document beside this.
     """
     entries = read_outline(document)
-    if not entries:
-        return 0
-    found = _mark_declared(entries, lines)
-    if found < len(entries) * MIN_OUTLINE_MATCH:
-        for line in lines:
-            line.declared_level = None
-        return 0
-    return found
+    return OutlineReport(entries=len(entries), located=_mark_declared(entries, lines))
 
 
 @dataclass(frozen=True)
@@ -405,7 +418,34 @@ class FontProfile:
     # The sizes of each heading level, largest level first. A level is a *set* of
     # sizes because one typographic level renders across several adjacent tenths.
     heading_levels: tuple[tuple[float, ...], ...] = ()
+    # What the outline says each rung of that ladder means, as `(rank, level)`
+    # pairs by rank. Empty where no outline located anything, and then a rank is
+    # its own level, which is what the ladder said before anything calibrated it.
+    calibration: tuple[tuple[int, int], ...] = ()
     heading_decline: str = ""
+
+    def level_for(self, rank: int) -> int | None:
+        """The heading level a rung of the size ladder means.
+
+        Nothing where the rung is *above* every rung the outline vouched for: a
+        running head, a part number and a colophon are all set larger than the
+        chapter openers, and the publisher's own outline is what says they are
+        not chapters. Where the outline named nothing this cannot fire, and the
+        ladder keeps every rung it found.
+
+        Below the vouched-for rungs the levels are extrapolated one for one — a
+        size the outline says nothing about sits one level under the nearest size
+        it does. Outlines commonly list chapters only, so most section headings
+        match nothing by design, and pruning them would destroy the section tree.
+        """
+        if not self.calibration:
+            return rank
+        if rank < self.calibration[0][0]:
+            return None
+        anchor_rank, anchor_level = max(
+            (known, level) for known, level in self.calibration if known <= rank
+        )
+        return min(6, anchor_level + rank - anchor_rank)
 
 
 def read_typography(lines: Sequence[Line], *, declared: bool = False) -> FontProfile:
@@ -414,9 +454,9 @@ def read_typography(lines: Sequence[Line], *, declared: bool = False) -> FontPro
     Document-wide rather than per-page on purpose: a page of pure listing has no
     prose to be dominant, and judged alone its code family *is* the body.
 
-    ``declared`` says the document's outline has already answered the structure
-    question. The size ladder is then not consulted at all — it is not a second
-    opinion to be merged in, it is what runs where there is no first one.
+    ``declared`` says the document's outline named at least one heading, which is
+    the difference between a document with no structure signal and one whose
+    structure simply is not typographic. The ladder still runs either way.
     """
     mass: Counter[str] = Counter()
     for line in lines:
@@ -437,10 +477,8 @@ def read_typography(lines: Sequence[Line], *, declared: bool = False) -> FontPro
     body_x0 = statistics.median([line.x0 for line in body or lines])
 
     code_families, tier = _code_families(lines, dominant, body_size, body_length, body_x0)
-    heading_levels = (
-        () if declared else _heading_levels(lines, body_size, float(body_length), code_families)
-    )
-    return FontProfile(
+    heading_levels = _heading_levels(lines, body_size, float(body_length), code_families)
+    profile = FontProfile(
         dominant=dominant,
         body_size=body_size,
         body_length=float(body_length),
@@ -454,6 +492,40 @@ def read_typography(lines: Sequence[Line], *, declared: bool = False) -> FontPro
         heading_decline=""
         if declared or heading_levels
         else "no size contrast: nothing is set larger than the body text",
+    )
+    # Second pass, because what a rung of the ladder *means* can only be read off
+    # the ladder once it exists.
+    return replace(profile, calibration=_calibration(lines, profile))
+
+
+def _calibration(lines: Sequence[Line], profile: FontProfile) -> tuple[tuple[int, int], ...]:
+    """What each rung of the size ladder means, learned from the outline.
+
+    Every line the outline named is a heading whose level the publisher stated
+    and whose size the ladder can rank. Ranks and stated levels together say
+    which rung is a part, which is a chapter and which is a section — and that is
+    a far better answer than `detect_structure`'s "the smallest level present",
+    which one stray large line hijacks for the whole book.
+
+    A named line the ladder cannot see at all takes no part in this. It is
+    tempting to read one as saying that every size the ladder *can* see outranks
+    the chapters — but measured against a real book that inference is a cliff: a
+    single such line, on a document whose outline names two entries, discarded
+    six of its seven headings. A line the ladder missed is evidence about that
+    line, not about the ladder.
+    """
+    stated: dict[int, Counter[int]] = {}
+    for line in lines:
+        if line.declared_level is None:
+            continue
+        rank = _ladder_level(line, profile)
+        if rank is None:
+            continue
+        stated.setdefault(rank, Counter())[line.declared_level] += 1
+    return tuple(
+        # The modal stated level, ties going to the shallower one.
+        (rank, min(levels, key=lambda level: (-levels[level], level)))
+        for rank, levels in sorted(stated.items())
     )
 
 
@@ -758,18 +830,25 @@ def _continues_the_heading(line: Line, previous: Line, level: int, previous_leve
 
 
 def _heading_level(line: Line, typography: FontProfile) -> int | None:
-    """What the outline declared, or else rank among the heading levels.
+    """What the outline declared for this line, or else what its size means.
 
-    Nothing else is asked once the outline has answered: `heading_levels` is empty
-    for a document that declares its own tree, so a line the outline does not name
-    is not a heading however it is set.
-
-    The "short line" test is what keeps the ladder from being size alone, which is
-    what over-promoted: a paragraph set in a larger face — a pull quote, an
-    epigraph — is not six headings.
+    The two are one heading set rather than two competing ones. The outline names
+    the chapters — usually *only* the chapters — and the ladder finds the sections
+    under them; taking either alone loses the other half of the tree.
     """
     if line.declared_level is not None:
         return line.declared_level
+    rank = _ladder_level(line, typography)
+    return None if rank is None else typography.level_for(rank)
+
+
+def _ladder_level(line: Line, typography: FontProfile) -> int | None:
+    """This line's rung of the size ladder, largest size first.
+
+    The "short line" test is what keeps this from being size alone, which is what
+    over-promoted: a paragraph set in a larger face — a pull quote, an epigraph —
+    is not six headings.
+    """
     if not typography.heading_levels:
         return None
     if not _could_be_a_heading(line, typography.body_size, typography.code_families):
@@ -838,17 +917,13 @@ class PdfExtractor:
         with pymupdf.open(path) as document:  # type: ignore[no-untyped-call]
             log(f"pdf: reading {document.page_count} page(s)")
             lines = read_lines(document)
-            declared = read_declared_headings(document, lines)
-        typography = read_typography(lines, declared=bool(declared))
+            outline = read_declared_headings(document, lines)
+        typography = read_typography(lines, declared=bool(outline.located))
         log(
             f"pdf: {len(lines)} lines, body {typography.dominant} at "
             f"{typography.body_size}pt"
         )
-        log(
-            f"pdf: {declared} outline entries declare the heading set"
-            if declared
-            else f"pdf: no usable outline, {len(typography.heading_levels)} heading level(s) by size"
-        )
+        log(f"pdf: {outline}, {len(typography.heading_levels)} heading level(s) by size")
         if typography.code_families:
             log(
                 f"pdf: code families ({typography.tier} tier): "

@@ -78,6 +78,7 @@ from xml.etree import ElementTree
 
 from booksmart_core.parsing.contract import ExtractorReport, ParseFailure, ParseResult
 from booksmart_core.parsing.blocks import Block, looks_like_code, to_gfm
+from booksmart_core.titles import normalise
 
 CONTAINER = "META-INF/container.xml"
 OCF_NS = "{urn:oasis:names:tc:opendocument:xmlns:container}"
@@ -354,24 +355,6 @@ class NavPoint:
     fragment: str  # an element id within it, or "" for the document itself
 
 
-# What separates the two things a navigation entry can anchor: the line carrying
-# the chapter's title, and the chapter itself. Told apart by the title rather
-# than by a length, because a length cannot tell a title from the first sentence
-# of a short chapter — and mistaking one for the other turns a paragraph of prose
-# into a heading and loses it as prose.
-_NOT_KEYABLE = re.compile(r"[^0-9a-z]+")
-
-
-def _key(title: str) -> str:
-    """A title reduced to what two spellings of it have in common.
-
-    The container and the page agree on the words and disagree on everything
-    else: the NCX says "Chapter 1: Beginnings", the page sets "CHAPTER ONE" in
-    small caps with a decorative rule under it.
-    """
-    return _NOT_KEYABLE.sub(" ", title.lower()).strip()
-
-
 def _declared_anchors(
     document: Element, points: Sequence[NavPoint]
 ) -> tuple[list[NavPoint], dict[int, NavPoint], dict[int, NavPoint]]:
@@ -422,18 +405,23 @@ def _title_element(element: Element, title: str) -> Element | None:
     heading goes in front of it. Failing this way costs a title said twice, once
     as a heading and again as the paragraph it sits in. Failing the other way
     would promote a paragraph of prose to a heading and lose it as prose.
+
+    Equality of the normalised titles, and deliberately not `titles_match`: the
+    containment that test allows is what makes it right for *finding* a title on a
+    page, and exactly what must not happen here — a paragraph containing the
+    chapter's name is not the chapter's name.
     """
-    wanted = _key(title)
+    wanted = normalise(title)
     if not wanted:
         return None
-    if _key(element.text()) == wanted:
+    if normalise(element.text()) == wanted:
         return element
     parent = element.parent
     # `<body>` is never a title, however short the document is; and it is not a
     # child of anything the walk descends through, so a heading put there is lost.
     if parent is None or parent.tag in {"body", "html", "#document"}:
         return None
-    return parent if _key(parent.text()) == wanted else None
+    return parent if normalise(parent.text()) == wanted else None
 
 
 def _blocks_of(
