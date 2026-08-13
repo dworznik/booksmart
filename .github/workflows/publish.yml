@@ -1,0 +1,68 @@
+name: Publish
+
+# Tag-driven publishing to PyPI via trusted publishing (OIDC — no API tokens).
+# Tag `core-vX.Y.Z` publishes booksmart-core; `cli-vX.Y.Z` publishes booksmart.
+# Every push also dry-run-builds both dists so packaging breakage is caught
+# without a tag.
+
+on:
+  push:
+    tags:
+      - "core-v*"
+      - "cli-v*"
+  pull_request:
+    paths:
+      - "packages/**"
+      - ".github/workflows/publish.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Build both distributions
+        run: |
+          uv build --package booksmart-core --out-dir dist-core
+          uv build --package booksmart --out-dir dist-cli
+      - name: Check metadata
+        run: |
+          uvx twine check dist-core/* dist-cli/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dists
+          path: |
+            dist-core
+            dist-cli
+
+  publish-core:
+    # Only when a core tag is pushed.
+    if: startsWith(github.ref, 'refs/tags/core-v')
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dists
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-core
+
+  publish-cli:
+    # Only when a cli tag is pushed.
+    if: startsWith(github.ref, 'refs/tags/cli-v')
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dists
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-cli

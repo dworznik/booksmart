@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+dist/
+dist-core/
+dist-cli/
+*.egg-info/
+
+# Object storage contents stay local; keep the layout tracked via .gitkeep
+storage/*/*
+!storage/*/.gitkeep
+
+.env
+
+# Parser output dumps hold whole books of publisher text. This repo is public and
+# the corpus is licensed to nobody, so they never get committed — the same rule the
+# assets checkout applies to its own parser-sweep/.
+parser-out/
+
+# Core dumps. One landed here at 265MB and was very nearly committed by a `git add -A`.
+# Anchored to the repository root: unanchored, `core` also matches `packages/core/`,
+# which hid the whole core package from `git status` and made `git add` refuse it.
+/core

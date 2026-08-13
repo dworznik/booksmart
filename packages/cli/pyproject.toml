@@ -1,0 +1,38 @@
+[project]
+name = "booksmart"
+version = "0.3.0"
+description = "Booksmart CLI — a local, single-user front end over booksmart-core (embedded storage, no server)."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Patryk Dwórznik", email = "patryk@dworznik.com" }]
+dependencies = [
+    # Minor-pinned, and deliberately so: the CLI is a thin front end over core's
+    # public seams (Stage functions, Runner, search, VectorStore), and pre-1.0 a
+    # minor bump is where those may break. `[tool.uv.sources]` below only rewires
+    # this for local workspace development — the published wheel carries this
+    # constraint, so an unbounded requirement would let a future core install
+    # against a CLI that cannot drive it.
+    # The [sparse] extra, not plain core: the CLI searches hybrid by default
+    # (issue #39), so BM25 is not optional here even though it is for core.
+    "booksmart-core[sparse]>=0.3.0,<0.4.0",
+    "typer>=0.12.0",
+    "rich>=13.7.0",
+    # Round-trip TOML for ~/.booksmart/config.toml: users hand-edit that file,
+    # so `config set` must preserve their comments and formatting.
+    "tomlkit>=0.13.0",
+]
+
+[project.scripts]
+booksmart = "booksmart_cli.main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/booksmart_cli"]
+
+[tool.uv.sources]
+booksmart-core = { workspace = true }
