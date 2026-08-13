@@ -1,6 +1,6 @@
 [project]
 name = "booksmart-core"
-version = "0.3.1"
+version = "0.4.0"
 description = "Booksmart's book-ingestion pipeline: parsing, structure, extraction, summaries, embeddings — as durable Stage functions consumers drive with their own Runner."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -23,6 +23,12 @@ dependencies = [
     "qdrant-client>=1.18.0,<1.19.0",
     "sqlalchemy>=2.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/dworznik/booksmart"
+Source = "https://github.com/dworznik/booksmart"
+Issues = "https://github.com/dworznik/booksmart/issues"
+Changelog = "https://github.com/dworznik/booksmart/releases"
 
 [project.optional-dependencies]
 # BM25 sparse vectors for hybrid retrieval. Optional because it is
