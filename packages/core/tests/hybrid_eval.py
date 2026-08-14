@@ -71,111 +71,111 @@ CORPUS: tuple[FixtureRecord, ...] = (
     FixtureRecord(
         key="ch-complexity",
         record_type="chapter",
-        title="The Nature of Complexity",
+        title="The Shape of Coupling",
         text=(
             "Complexity is anything about the structure of a software system that "
             "makes it hard to understand and modify. It is caused by dependencies "
-            "and obscurity, and it shows up as change amplification, cognitive "
-            "load, and unknown unknowns. Complexity is incremental: it accumulates "
+            "and obscurity, and it shows up as edit fan-out, cognitive "
+            "load, and silent gaps. Complexity is incremental: it accumulates "
             "from many small decisions rather than arriving all at once."
         ),
     ),
     FixtureRecord(
-        key="ko-change-amplification",
+        key="ko-edit-fan-out",
         record_type="knowledge_object",
-        title="Change amplification",
+        title="Edit fan-out",
         text=(
-            "Symptom: Change amplification\n"
+            "Symptom: Edit fan-out\n"
             "A seemingly simple change requires edits in many different places.\n"
-            "Change amplification is the first symptom of complexity. A banner "
+            "Edit fan-out is the first symptom of complexity. A banner "
             "colour hard-coded into every page means changing the colour touches "
             "every page. The goal of good design is to reduce the amount of code "
             "affected by each design decision."
         ),
     ),
     FixtureRecord(
-        key="ko-cognitive-load",
+        key="ko-carrying-cost",
         record_type="knowledge_object",
-        title="Cognitive load",
+        title="Carrying cost",
         text=(
-            "Symptom: Cognitive load\n"
+            "Symptom: Carrying cost\n"
             "How much a developer must know in order to complete a task.\n"
-            "Cognitive load is the second symptom of complexity. An interface that "
+            "Carrying cost is the second symptom of complexity. An interface that "
             "requires callers to remember to free a returned buffer, or to call "
-            "methods in a particular order, raises it. Higher cognitive load means "
+            "methods in a particular order, raises it. Higher carrying cost means "
             "more time to learn and more chances to introduce bugs."
         ),
     ),
     FixtureRecord(
-        key="ko-unknown-unknowns",
+        key="ko-silent-gaps",
         record_type="knowledge_object",
-        title="Unknown unknowns",
+        title="Silent gaps",
         text=(
-            "Symptom: Unknown unknowns\n"
+            "Symptom: Silent gaps\n"
             "It is not obvious which pieces of code must be modified, or what "
             "information is needed to modify them.\n"
-            "Unknown unknowns are the worst of the three symptoms of complexity: "
+            "Silent gaps are the worst of the three symptoms of complexity: "
             "with the other two you at least know what you are facing. Here there "
             "is no way to be sure a change is complete short of reading everything."
         ),
     ),
     FixtureRecord(
-        key="ch-modules-deep",
+        key="ch-interfaces-narrow",
         record_type="chapter",
-        title="Modules Should Be Deep",
+        title="Interfaces Should Be Narrow",
         text=(
             "The best modules provide powerful functionality behind a simple "
-            "interface. Depth is the ratio of the functionality a module offers to "
+            "interface. Narrowness is the ratio of the functionality a module offers to "
             "the complexity of the interface it presents. Interface simplicity, not "
             "implementation simplicity, is what matters, because the interface is "
             "the cost every user of the module pays."
         ),
     ),
     FixtureRecord(
-        key="ko-deep-module",
+        key="ko-narrow-interface",
         record_type="knowledge_object",
-        title="Deep module",
+        title="Narrow interface",
         text=(
-            "Principle: Deep module\n"
+            "Principle: Narrow interface\n"
             "A module whose interface is much simpler than its implementation.\n"
-            "A deep module hides a great deal behind a small interface. The Unix "
+            "A narrow interface hides a great deal behind a small interface. The Unix "
             "file I/O interface is the canonical example: five system calls stand "
             "in front of scheduling, buffering, permissions and device drivers. "
-            "Depth is what makes a module worth having."
+            "Narrowness is what makes a module worth having."
         ),
     ),
     FixtureRecord(
-        key="ko-shallow-module",
+        key="ko-wide-interface",
         record_type="knowledge_object",
-        title="Shallow module",
+        title="Wide interface",
         text=(
-            "Red flag: Shallow module\n"
+            "Red flag: Wide interface\n"
             "A module whose interface is as complicated as its implementation.\n"
-            "A shallow module costs more to learn than it saves in work. A method "
+            "A wide interface costs more to learn than it saves in work. A method "
             "that only sets a field, or a class that merely forwards to another, is "
-            "shallow. Classitis — the belief that classes should be small and "
-            "numerous — manufactures shallow modules in bulk."
+            "wide. Splinterism — the belief that classes should be small and "
+            "numerous — manufactures wide interfaces in bulk."
         ),
     ),
     FixtureRecord(
-        key="ko-pass-through-method",
+        key="ko-relay-method",
         record_type="knowledge_object",
-        title="Pass-through method",
+        title="Relay method",
         text=(
-            "Red flag: Pass-through method\n"
+            "Red flag: Relay method\n"
             "A method that does nothing except call another method with much the "
             "same signature.\n"
-            "A pass-through method adds an interface without adding functionality, "
-            "which is the definition of shallow. It usually means responsibility "
+            "A relay method adds an interface without adding functionality, "
+            "which is the definition of a wide interface. It usually means responsibility "
             "has been split between two classes that do not need to be separate."
         ),
     ),
     FixtureRecord(
-        key="ko-conjoined-methods",
+        key="ko-welded-methods",
         record_type="knowledge_object",
-        title="Conjoined methods",
+        title="Welded methods",
         text=(
-            "Red flag: Conjoined methods\n"
+            "Red flag: Welded methods\n"
             "Two methods that cannot be understood independently of each other.\n"
             "If reading one method requires reading another to make sense of it, "
             "the decomposition has failed. Splitting a method is only worthwhile "
@@ -195,14 +195,14 @@ CORPUS: tuple[FixtureRecord, ...] = (
         ),
     ),
     FixtureRecord(
-        key="ko-temporal-decomposition",
+        key="ko-clock-shaped-split",
         record_type="knowledge_object",
-        title="Temporal decomposition",
+        title="Clock-shaped split",
         text=(
-            "Red flag: Temporal decomposition\n"
+            "Red flag: Clock-shaped split\n"
             "Structure follows the order operations happen in, rather than what "
             "knowledge they need.\n"
-            "Temporal decomposition is the most common cause of information "
+            "Clock-shaped split is the most common cause of information "
             "leakage. Splitting a file reader and a file writer into separate "
             "classes because reading happens before writing forces both to know "
             "the file format. Focus on knowledge, not on order."
@@ -211,7 +211,7 @@ CORPUS: tuple[FixtureRecord, ...] = (
     FixtureRecord(
         key="sec-general-purpose",
         record_type="section",
-        title="Somewhat General-Purpose Interfaces",
+        title="Contracts Broad Enough to Reuse",
         text=(
             "Make modules somewhat general-purpose: the interface should be general "
             "enough to support several uses, while the implementation solves the "
@@ -222,41 +222,41 @@ CORPUS: tuple[FixtureRecord, ...] = (
     FixtureRecord(
         key="ch-different-layer",
         record_type="chapter",
-        title="Different Layer, Different Abstraction",
+        title="Different Hop, Different Shape",
         text=(
             "Adjacent layers of a system should provide different abstractions. "
             "When they do not, the extra layer adds cost without adding value. "
-            "Pass-through variables, which are threaded through many methods that "
+            "Relay variables, which are threaded through many methods that "
             "do nothing with them, are a symptom of the same problem."
         ),
     ),
     FixtureRecord(
-        key="ch-tactical-strategic",
+        key="ch-throughput-first",
         record_type="chapter",
-        title="Working Code Isn't Enough",
+        title="Shipping Isn't Enough",
         text=(
-            "Tactical programming optimises for getting the next feature working; "
-            "strategic programming treats a working design as the goal and accepts "
+            "Throughput-first programming optimises for getting the next feature out; "
+            "design-first programming treats a working design as the goal and accepts "
             "that this costs more up front. The investment is roughly ten to twenty "
             "percent of development time, and it pays back within months."
         ),
     ),
     FixtureRecord(
-        key="ko-tactical-tornado",
+        key="ko-throughput-hero",
         record_type="knowledge_object",
-        title="Tactical tornado",
+        title="Throughput hero",
         text=(
-            "Anti-pattern: Tactical tornado\n"
+            "Anti-pattern: Throughput hero\n"
             "A prolific developer who produces features faster than anyone, and "
             "leaves wreckage behind.\n"
-            "Management may see a tactical tornado as a hero. Better engineers see "
+            "Management may see a throughput hero as a hero. Better engineers see "
             "someone whose speed comes from making everyone else's work harder."
         ),
     ),
     FixtureRecord(
-        key="ch-design-it-twice",
+        key="ch-model-it-twice",
         record_type="chapter",
-        title="Design It Twice",
+        title="Model It Twice",
         text=(
             "Consider at least two radically different options for any major design "
             "decision before choosing. Comparing alternatives teaches you what the "
@@ -268,7 +268,7 @@ CORPUS: tuple[FixtureRecord, ...] = (
     FixtureRecord(
         key="ch-comments-abstractions",
         record_type="chapter",
-        title="Comments Describe Things That Aren't Obvious",
+        title="Comments Carry What Code Cannot",
         text=(
             "The reason to write a comment is that some information could not be "
             "expressed in the code itself. Comments that restate the code add "
@@ -280,7 +280,7 @@ CORPUS: tuple[FixtureRecord, ...] = (
     FixtureRecord(
         key="sec-comments-first",
         record_type="section",
-        title="Write the Comments First",
+        title="Write the Contract First",
         text=(
             "Write the interface comment before writing the body. Doing so turns "
             "documentation into a design tool: a comment that is long or awkward to "
@@ -304,7 +304,7 @@ CORPUS: tuple[FixtureRecord, ...] = (
     FixtureRecord(
         key="ch-exceptions",
         record_type="chapter",
-        title="Define Errors Out of Existence",
+        title="Fewer Situations Count as Failures",
         text=(
             "Exception handling is one of the worst sources of complexity, because "
             "every exception a method throws becomes part of its interface. The "
@@ -345,51 +345,51 @@ CORPUS: tuple[FixtureRecord, ...] = (
 QUERIES: tuple[FixtureQuery, ...] = (
     # ---- exact-term: the book's coined vocabulary, verbatim ----
     FixtureQuery(
-        query="temporal decomposition",
+        query="clock-shaped split",
         kind="exact-term",
-        expects=("ko-temporal-decomposition",),
+        expects=("ko-clock-shaped-split",),
         why="A coined phrase. Nothing about the words suggests their meaning.",
     ),
     FixtureQuery(
-        query="pass-through method",
+        query="relay method",
         kind="exact-term",
-        expects=("ko-pass-through-method",),
-        why="Near-duplicate vocabulary elsewhere ('pass-through variables'), so a "
+        expects=("ko-relay-method",),
+        why="Near-duplicate vocabulary elsewhere ('relay variables'), so a "
         "term match has to beat a topical neighbour.",
     ),
     FixtureQuery(
-        query="change amplification",
+        query="edit fan-out",
         kind="exact-term",
-        expects=("ko-change-amplification", "ch-complexity"),
+        expects=("ko-edit-fan-out", "ch-complexity"),
         why="Named symptom. The complexity chapter summary names it too and is a "
         "fair answer, so both count — an exact-term query with a decoy that is "
         "genuinely relevant is the realistic case.",
     ),
     FixtureQuery(
-        query="unknown unknowns",
+        query="silent gaps",
         kind="exact-term",
-        expects=("ko-unknown-unknowns", "ch-complexity"),
+        expects=("ko-silent-gaps", "ch-complexity"),
         why="Two very common words in an uncommon pairing — the case where an "
         "embedding is most likely to drift to the wrong record.",
     ),
     FixtureQuery(
-        query="conjoined methods",
+        query="welded methods",
         kind="exact-term",
-        expects=("ko-conjoined-methods",),
+        expects=("ko-welded-methods",),
         why="Rare term whose record shares topic ('methods', 'split') with several "
         "others.",
     ),
     FixtureQuery(
-        query="tactical tornado",
+        query="throughput hero",
         kind="exact-term",
-        expects=("ko-tactical-tornado",),
-        why="Proper-noun-like coinage; 'tactical' also appears in the chapter "
+        expects=("ko-throughput-hero",),
+        why="Proper-noun-like coinage; 'throughput' also appears in the chapter "
         "summary, so the exact pair must win.",
     ),
     FixtureQuery(
-        query="classitis",
+        query="splinterism",
         kind="exact-term",
-        expects=("ko-shallow-module",),
+        expects=("ko-wide-interface",),
         why="A word that appears exactly once in the corpus and almost certainly "
         "never in the embedding model's training data.",
     ),
@@ -397,7 +397,7 @@ QUERIES: tuple[FixtureQuery, ...] = (
     FixtureQuery(
         query="a tiny tweak forces me to rewrite dozens of files",
         kind="conceptual",
-        expects=("ko-change-amplification",),
+        expects=("ko-edit-fan-out",),
         why="Describes the symptom in entirely different words: not one content "
         "word of the query shares a stem with the record.",
     ),
@@ -405,20 +405,20 @@ QUERIES: tuple[FixtureQuery, ...] = (
         query="how many things does a person have to hold in their head before "
         "they can get anything done",
         kind="conceptual",
-        expects=("ko-cognitive-load",),
+        expects=("ko-carrying-cost",),
         why="Plain-language restatement with no vocabulary overlap.",
     ),
     FixtureQuery(
         query="a lot of capability reachable through only a handful of entry points",
         kind="conceptual",
-        expects=("ko-deep-module", "ch-modules-deep"),
-        why="Describes depth without using 'deep', 'module', 'interface' or any "
+        expects=("ko-narrow-interface", "ch-interfaces-narrow"),
+        why="Describes narrowness without using 'narrow', 'module', 'interface' or "
         "other word either record contains.",
     ),
     FixtureQuery(
         query="is it useful to weigh several rival approaches up front",
         kind="conceptual",
-        expects=("ch-design-it-twice",),
+        expects=("ch-model-it-twice",),
         why="Asks the question the chapter answers without using its title words, "
         "or any other word in it.",
     ),
@@ -426,20 +426,20 @@ QUERIES: tuple[FixtureQuery, ...] = (
         query="make the awkward path just another ordinary path",
         kind="conceptual",
         expects=("ch-exceptions", "ko-exception-masking"),
-        why="Restates 'define errors out of existence' avoiding 'error', "
-        "'exception' and 'handle' entirely.",
+        why="Restates the chapter's argument avoiding 'error', 'exception', "
+        "'failure' and 'handle' entirely.",
     ),
     FixtureQuery(
         query="should i spend effort today to make tomorrow cheaper",
         kind="conceptual",
-        expects=("ch-tactical-strategic",),
+        expects=("ch-throughput-first",),
         why="The investment argument, none of its vocabulary.",
     ),
     # ---- mixed: a real question, part vocabulary and part paraphrase ----
     FixtureQuery(
-        query="why is a shallow module bad for the people calling it",
+        query="why is a wide interface bad for the people calling it",
         kind="mixed",
-        expects=("ko-shallow-module",),
+        expects=("ko-wide-interface",),
         why="Names the term, then asks about it in its own words.",
     ),
     FixtureQuery(
@@ -451,7 +451,7 @@ QUERIES: tuple[FixtureQuery, ...] = (
     FixtureQuery(
         query="information leakage between modules",
         kind="mixed",
-        expects=("ch-information-hiding", "ko-temporal-decomposition"),
+        expects=("ch-information-hiding", "ko-clock-shaped-split"),
         why="Exact term plus a general word, and two records legitimately answer.",
     ),
     FixtureQuery(

@@ -143,7 +143,7 @@ MERGE_MAX_LINE_GAP = 3
 def _merge_number_title_pairs(headings: list[Heading], chapter_level: int) -> list[Heading]:
     """Books often typeset the chapter number and its title as two consecutive
     same-level headings. Merge such a pair into one heading ("Chapter 4:
-    Modules Should Be Deep") anchored at the number heading's line."""
+    Interfaces Should Be Narrow") anchored at the number heading's line."""
     merged: list[Heading] = []
     index = 0
     while index < len(headings):
