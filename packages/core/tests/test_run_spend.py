@@ -22,6 +22,7 @@ from booksmart_core.runner import execute_run
 from booksmart_core.storage import BookStorage
 
 from .conftest import StubEmbeddingProvider, StubLLMProvider, store_book
+from .test_profile_api import ExplodingLLM
 from .test_structure_api import make_structured_pdf_bytes
 
 
@@ -96,11 +97,36 @@ class TestEveryStageIsRecorded:
         self,
         session_factory: sessionmaker[Session],
         settings: Settings,
-        storage: BookStorage,
+        book: uuid.UUID,
     ) -> None:
         """A partial run is exactly when "where did it get to, and what did that
         cost" is worth asking. The stages before the failure really did spend
-        what they spent."""
+        what they spent, and the failure discards their *output* — the rollback
+        — without making their spend untrue.
+
+        The book is a good one and the provider is the thing that breaks, so the
+        run reaches its third stage before failing. A fixture that failed at the
+        first stage would assert an empty list and prove nothing.
+        """
+        run_id = execute_run(
+            session_factory, settings.storage_root, book, llm=ExplodingLLM()
+        )
+
+        run = run_row(session_factory, run_id)
+        assert run.status == "failed"
+        assert run.error is not None and "profile" in run.error
+        assert [stage.stage for stage in stages_of(session_factory, run_id)] == [
+            "parse", "structure"
+        ]
+
+    def test_a_run_that_fails_at_its_first_stage_keeps_nothing(
+        self,
+        session_factory: sessionmaker[Session],
+        settings: Settings,
+        storage: BookStorage,
+    ) -> None:
+        """The other end of the same rule: no stage completed, so there is no
+        spend to attribute and no row claiming there was."""
         book_id = uuid.UUID(
             store_book(
                 session_factory,
@@ -115,7 +141,7 @@ class TestEveryStageIsRecorded:
         run_id = execute_run(session_factory, settings.storage_root, book_id)
 
         assert run_row(session_factory, run_id).status == "failed"
-        assert [stage.stage for stage in stages_of(session_factory, run_id)] == []
+        assert stages_of(session_factory, run_id) == []
 
 
 class TestTheSpendIsAttributed:

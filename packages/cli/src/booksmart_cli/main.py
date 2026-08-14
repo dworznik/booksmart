@@ -285,9 +285,9 @@ def runs_show(run: Annotated[str, typer.Argument(help="Run id.")]) -> None:
 def _stage_table(run: Run) -> Table:
     """Where the run's spend went, and how long each Stage took.
 
-    Zeros are printed rather than blanked. A Stage that ran and called no
-    provider spent nothing, and that is a measurement — the blank is reserved
-    for a clock a Stage never reported.
+    Zeros are printed rather than blanked: a Stage that ran and called no
+    provider spent nothing, and nothing is a measurement. A blank means the
+    Stage reported no such thing at all — no clock, or no items to count.
     """
     table = Table("stage", "in", "out", "embed", "items", "secs")
     for stage in run.stages:

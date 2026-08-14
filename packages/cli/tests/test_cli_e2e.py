@@ -59,9 +59,13 @@ def test_add_then_ingest_produces_every_artifact(
     shown = runner.invoke(app, ["runs", "show", run_id], env={"COLUMNS": "200"})
     assert shown.exit_code == 0
     # Where the spend went, which is the whole reason to keep the reports: a
-    # run-level total cannot say which Stage to move to a cheaper model.
+    # run-level total cannot say which Stage to move to a cheaper model. Read
+    # from the stage table alone — several stage names are also substrings of
+    # the field rows above it, so `"extraction" in stdout` would pass on
+    # `extraction_version` and prove nothing.
+    _, _, stage_table = shown.stdout.partition("secs")
     for stage in ("parse", "structure", "profile", "extraction", "summaries", "embeddings"):
-        assert stage in shown.stdout
+        assert stage in stage_table
 
 
 def test_data_dir_relocates_to_a_new_home(

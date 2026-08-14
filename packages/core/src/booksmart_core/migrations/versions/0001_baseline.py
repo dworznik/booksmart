@@ -17,10 +17,17 @@ is ``runs`` (né ``ingestion_jobs``, with no ``queued`` state and no
 Existing Postgres deployment: it is already at the old head, so it must NOT
 re-run this migration. Its ``alembic_version`` still points at the old ``0012``,
 which no longer exists in this history, so a plain ``alembic stamp head`` errors
-with "Can't locate revision '0012'". Purge the stale row and stamp this baseline
-in one step (the physical schema already matches):
+with "Can't locate revision '0012'". Purge the stale row and stamp **this
+revision** — the physical schema matches this one and no other — then upgrade
+the ordinary way:
 
-    alembic stamp --purge head
+    alembic stamp --purge 0001
+    alembic upgrade head
+
+Stamping ``head`` instead is the trap. It was correct while this was the only
+revision, and it silently stopped being correct the moment a second one landed:
+the deployment would be marked as holding every migration since, having applied
+none of them, and the upgrade that would have fixed it becomes a no-op forever.
 
 Fresh databases (every SQLite CLI install, and Postgres CI) migrate from empty.
 
