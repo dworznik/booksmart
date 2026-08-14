@@ -24,6 +24,7 @@ EXPECTED_TABLES = {
     "book_profiles",
     "knowledge_objects",
     "runs",
+    "run_stages",
 }
 
 
@@ -47,11 +48,21 @@ def _current_revision(url: str) -> str | None:
         engine.dispose()
 
 
-def test_history_squashed_to_a_single_baseline() -> None:
+def test_the_history_is_one_line_rooted_in_the_squashed_baseline() -> None:
+    """What the squash bought, stated as the invariant rather than as a count.
+
+    One root and no branching is the part that has to hold: two roots would mean
+    the old per-change chain had come back, and a branch is a history that
+    cannot be walked to a single head. The number of revisions above the root is
+    just how much has happened since — a migration is the ordinary way to change
+    the schema, and forbidding a second one would forbid that.
+    """
     script = ScriptDirectory.from_config(_alembic_config("sqlite://"))
     revisions = list(script.walk_revisions())
-    assert len(revisions) == 1
-    assert revisions[0].down_revision is None
+
+    roots = [revision for revision in revisions if revision.down_revision is None]
+    assert [root.revision for root in roots] == ["0001"]
+    assert len(script.get_heads()) == 1
 
 
 def test_empty_database_migrates_to_head(tmp_path: Path) -> None:

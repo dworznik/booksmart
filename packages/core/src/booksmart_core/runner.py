@@ -27,7 +27,7 @@ from booksmart_core.llm import (
     build_embedding_provider,
     build_llm_provider,
 )
-from booksmart_core.models import Book, Run
+from booksmart_core.models import Book, Run, RunStage
 from booksmart_core.parsing import EXTRACTION_VERSION, ExtractorRouter, build_default_router
 from booksmart_core.profile import PROFILE_PROMPT_VERSION
 from booksmart_core.stages import (
@@ -120,19 +120,43 @@ def finalize_run(
     stamps: tuple[str, str | None, str | None],
     error: str | None = None,
     count_tokens: bool = False,
+    count_embedding_tokens: bool = False,
 ) -> None:
     """Aggregate a run's StageReports onto its Run row and close it: outcome,
-    version stamps, summed token spend, and finish time. Token totals stay NULL
-    unless ``count_tokens`` (the scope made LLM calls), so "no LLM work" reads
-    differently from "LLM work that reported zero". A core helper so any Runner
-    — this one, or a durable-execution Runner — finalizes a Run the same way
-    across process boundaries. Commits."""
+    version stamps, summed token spend, and finish time. Each report is also
+    kept as a `RunStage` row, so the total can afterwards be asked where it went
+    — which Stage spent it, over how many items, and for how long.
+
+    Token totals stay NULL unless ``count_tokens`` (the scope made LLM calls) and
+    ``count_embedding_tokens`` (it embedded something), so "no work of this kind"
+    reads differently from "work of this kind that reported zero". Both are told
+    to this function rather than inferred from the reports, because a run that
+    failed before reaching a Stage has no report to infer from and the scope is
+    still the truth about what it set out to do.
+
+    A core helper so any Runner — this one, or a durable-execution Runner —
+    finalizes a Run the same way across process boundaries. Commits."""
     run.status = status
     run.error = error
     run.extraction_version, run.model_version, run.prompt_version = stamps
     if count_tokens:
         run.input_tokens = sum(report.input_tokens for report in reports)
         run.output_tokens = sum(report.output_tokens for report in reports)
+    if count_embedding_tokens:
+        run.embedding_tokens = sum(report.embedding_tokens for report in reports)
+    run.stages = [
+        RunStage(
+            position=position,
+            stage=report.stage,
+            input_tokens=report.input_tokens,
+            output_tokens=report.output_tokens,
+            embedding_tokens=report.embedding_tokens,
+            counts=dict(report.counts),
+            started_at=report.started_at,
+            finished_at=report.finished_at,
+        )
+        for position, report in enumerate(reports)
+    ]
     run.finished_at = datetime.now(UTC)
     session.commit()
 
@@ -279,6 +303,7 @@ def execute_run(
             stamps=stamps,
             error=error,
             count_tokens=stages is not None and any(s in LLM_STAGES for s in stages),
+            count_embedding_tokens=stages is not None and "embeddings" in stages,
         )
         return run_id
 

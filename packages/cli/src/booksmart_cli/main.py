@@ -256,7 +256,7 @@ def runs_list(book: Annotated[str, typer.Argument(help="Book id.")]) -> None:
 @runs_app.command("show")
 @handle_errors
 def runs_show(run: Annotated[str, typer.Argument(help="Run id.")]) -> None:
-    """Show one run's outcome, versions, and token spend."""
+    """Show one run's outcome, versions, and token spend — per Stage."""
     runtime = Runtime.load()
     run_row = reads.get_run(runtime, _parse_uuid(run))
     table = Table("field", "value", show_header=False)
@@ -272,11 +272,35 @@ def runs_show(run: Annotated[str, typer.Argument(help="Run id.")]) -> None:
         "prompt_version",
         "input_tokens",
         "output_tokens",
+        "embedding_tokens",
     ):
         value = getattr(run_row, field)
         if value is not None:
             table.add_row(field, str(value))
     console.print(table)
+    if run_row.stages:
+        console.print(_stage_table(run_row))
+
+
+def _stage_table(run: Run) -> Table:
+    """Where the run's spend went, and how long each Stage took.
+
+    Zeros are printed rather than blanked. A Stage that ran and called no
+    provider spent nothing, and that is a measurement — the blank is reserved
+    for a clock a Stage never reported.
+    """
+    table = Table("stage", "in", "out", "embed", "items", "secs")
+    for stage in run.stages:
+        seconds = stage.seconds
+        table.add_row(
+            stage.stage,
+            f"{stage.input_tokens:,}",
+            f"{stage.output_tokens:,}",
+            f"{stage.embedding_tokens:,}",
+            ", ".join(f"{name} {count:,}" for name, count in sorted(stage.counts.items())),
+            f"{seconds:.1f}" if seconds is not None else "",
+        )
+    return table
 
 
 def _status_markup(status: str) -> str:

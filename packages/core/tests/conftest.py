@@ -187,6 +187,18 @@ def run_dict(run: Run) -> dict[str, object]:
         "prompt_version": run.prompt_version,
         "input_tokens": run.input_tokens,
         "output_tokens": run.output_tokens,
+        "embedding_tokens": run.embedding_tokens,
+        "stages": [
+            {
+                "stage": stage.stage,
+                "input_tokens": stage.input_tokens,
+                "output_tokens": stage.output_tokens,
+                "embedding_tokens": stage.embedding_tokens,
+                "counts": dict(stage.counts),
+                "seconds": stage.seconds,
+            }
+            for stage in run.stages
+        ],
         "created_at": run.created_at.isoformat() if run.created_at else None,
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
     }

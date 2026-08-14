@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -183,8 +183,65 @@ class Run(Base):
     # scope made no LLM calls.
     input_tokens: Mapped[int | None]
     output_tokens: Mapped[int | None]
+    # Embedding usage, summed the same way and kept apart: it is billed at a
+    # different rate, so folding it into `input_tokens` would produce a total
+    # nobody can cost from. NULL when the scope embedded nothing.
+    embedding_tokens: Mapped[int | None]
     # created_at is the execution start (there is no queued state before it).
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Eagerly loaded, because a Run is routinely read and then detached — the
+    # CLI expunges it before rendering — and a lazy relationship there raises
+    # instead of answering.
+    stages: Mapped[list["RunStage"]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="RunStage.position",
+        lazy="selectin",
+    )
+
+
+class RunStage(Base):
+    """What one Stage of a Run did: its spend, its throughput, its clock.
+
+    The Runner already receives a `StageReport` per Stage and summed it into the
+    Run row; this is that report kept rather than discarded. A run-level total
+    can say what a book cost and never which Stage to move to a cheaper model,
+    nor which Stage is the slow one.
+
+    Stages stay Run-blind (ADR 0002): no Stage writes this, and none can see it.
+    The Runner owns the Run record, and these rows are part of it — they are
+    written once when the Run is finalized, and never updated."""
+
+    __tablename__ = "run_stages"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
+    # Execution order within the run, so history reads back in the order it
+    # happened even where two stages share a timestamp.
+    position: Mapped[int]
+    stage: Mapped[str]
+    # Zero rather than NULL: a Stage that ran and called no provider spent
+    # nothing, which is a measurement. The Run-level totals keep the NULLs,
+    # where the distinction is "no LLM work" against "LLM work reporting zero".
+    input_tokens: Mapped[int] = mapped_column(default=0)
+    output_tokens: Mapped[int] = mapped_column(default=0)
+    embedding_tokens: Mapped[int] = mapped_column(default=0)
+    # What the Stage got through — `{"chapters": 12}` and the like. A cost is
+    # only readable beside a throughput: five hundred tokens over two chapters
+    # is a different fact from five hundred over fifty.
+    counts: Mapped[dict[str, int]] = mapped_column(JSON, default=dict)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    run: Mapped[Run] = relationship(back_populates="stages")
+
+    @property
+    def seconds(self) -> float | None:
+        """How long the Stage took, or nothing if it never reported a clock."""
+        if self.started_at is None or self.finished_at is None:
+            return None
+        return (self.finished_at - self.started_at).total_seconds()

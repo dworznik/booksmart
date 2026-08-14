@@ -4,6 +4,7 @@ SQLite file and embedded Qdrant, then read every artifact back through the
 commands. Also proves the whole data dir relocates at the CLI level.
 """
 
+import re
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -44,9 +45,23 @@ def test_add_then_ingest_produces_every_artifact(
     assert knowledge.exit_code == 0
     assert "Principle" in knowledge.stdout
 
-    runs = runner.invoke(app, ["runs", "list", book_id])
+    # Wide, because rich ellipsises the id column at the default test width
+    # and the id is what the next command needs.
+    runs = runner.invoke(app, ["runs", "list", book_id], env={"COLUMNS": "200"})
     assert runs.exit_code == 0
     assert "succeeded" in runs.stdout
+
+    # Read back out of the rendered table rather than from the run itself: the
+    # id a user copies out of `runs list` is the one `runs show` has to accept.
+    found = re.search(r"[0-9a-f]{8}-[0-9a-f-]{27}", runs.stdout)
+    assert found is not None
+    run_id = found.group()
+    shown = runner.invoke(app, ["runs", "show", run_id], env={"COLUMNS": "200"})
+    assert shown.exit_code == 0
+    # Where the spend went, which is the whole reason to keep the reports: a
+    # run-level total cannot say which Stage to move to a cheaper model.
+    for stage in ("parse", "structure", "profile", "extraction", "summaries", "embeddings"):
+        assert stage in shown.stdout
 
 
 def test_data_dir_relocates_to_a_new_home(

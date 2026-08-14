@@ -22,8 +22,18 @@ Incremental Scopes reuse upstream Stage output.
 The record of one pipeline execution over a book: its Scope, outcome, and
 provenance (models, prompt versions, token spend). Created the moment
 execution starts — there is no queued state. Owned by the Runner; Stages
-never see it.
+never see it. Its spend is recorded twice over: once as the Run's totals, and
+once per Stage, because the total can say what a book cost and never which
+Stage to move to a cheaper model.
 _Avoid_: job
+
+**Stage report**:
+What one Stage did — its token spend, what it got through, and how long it
+took. A Stage returns one and the Runner keeps it beside the Run. Embedding
+tokens are counted apart from completion tokens throughout, because they are
+billed at a different rate and a single total cannot be costed.
+_Avoid_: metrics, telemetry (this is provenance a consumer reads back, not a
+stream anything watches)
 
 **Runner**:
 Whatever executes Stages in order and owns the Run record. Each consumer
