@@ -360,6 +360,12 @@ def _entry_at(
     a loose test on its own — a one-word entry is contained in a great deal of
     prose — and what tightens it here is *where* it is asked: only from the entry
     the search has reached, and only on the page that entry names.
+
+    The page has to be that page exactly. An entry the search never located stays
+    in front of it for the rest of the book, and a short one — "Notes" — then
+    matches the first body line anywhere later that opens with the same word.
+    That is not one lost chapter: the spurious heading it marks feeds the rung
+    calibration, so a line of prose ends up saying which rung the chapters are on.
     """
     for index in range(start, len(entries)):
         entry = entries[index]
@@ -367,6 +373,11 @@ def _entry_at(
         # been reached yet and this line is not it.
         if entry.page > page:
             return None
+        # One pointing before it is stale — its own page has gone by without it
+        # being found — so it is skipped rather than matched here. Later entries
+        # on this page are still reachable behind it.
+        if entry.page < page:
+            continue
         if titles_match(text, entry.title):
             return index
     return None

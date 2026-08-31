@@ -13,7 +13,11 @@ route must stay free of MuPDF.
 
 import re
 
-_ALPHANUM = re.compile(r"[^a-z0-9]+")
+# `\W` under Unicode, plus the underscore it counts as a word character. A letter
+# is a letter in every script: keyed on ASCII, an accented title lost the accented
+# letters and a title in a non-Latin script normalised to nothing at all, which
+# matches nothing and reads exactly like a book with no titles in it.
+_ALPHANUM = re.compile(r"[\W_]+")
 
 # Characters that are in the text without being in the word. Some PDFs carry a
 # soft hyphen at every legal break point, so collapsing one to a space splits the
@@ -32,7 +36,7 @@ INVISIBLE = str.maketrans(
 
 def normalise(text: str) -> str:
     """Lower-cased, punctuation collapsed — the form both sides are compared in."""
-    return _ALPHANUM.sub(" ", text.translate(INVISIBLE).lower()).strip()
+    return _ALPHANUM.sub(" ", text.translate(INVISIBLE).casefold()).strip()
 
 
 def _begins(text: str, opening: str) -> bool:

@@ -18,6 +18,7 @@ Two things are asserted more strictly than they may look:
 """
 
 import re
+import struct
 import zipfile
 from pathlib import Path
 
@@ -132,6 +133,24 @@ def build_epub(
                 "<style>p { margin: 0 }</style></head>"
                 f"<body>{body}</body></html>",
             )
+    return path
+
+
+def corrupt_member(path: Path, member: str) -> Path:
+    """Damage one member's stored bytes, leaving the rest of the zip intact.
+
+    A byte flipped in the payload no longer agrees with the checksum in the
+    header, and `zipfile` raises on the read rather than handing back what it
+    has. Written this way rather than by rewriting the archive because the point
+    is a book that is fine apart from one member.
+    """
+    data = bytearray(path.read_bytes())
+    with zipfile.ZipFile(path) as archive:
+        info = archive.getinfo(member)
+    name_length, extra_length = struct.unpack_from("<HH", data, info.header_offset + 26)
+    payload = info.header_offset + 30 + name_length + extra_length
+    data[payload] ^= 0x01
+    path.write_bytes(bytes(data))
     return path
 
 
@@ -529,6 +548,27 @@ class TestTheDeclaredNavigation:
         markdown, report = extract(path)
 
         assert detect_structure(markdown) == []
+        assert any("no <h1>-<h6> element" in reason for reason in report.declines)  # type: ignore[attr-defined]
+
+    def test_a_damaged_navigation_member_costs_the_navigation_not_the_book(
+        self, tmp_path: Path
+    ) -> None:
+        """A member whose stored bytes no longer match their checksum fails on the
+        *read*, before anything gets a chance to parse it. Letting that out would
+        turn "the tree could not be read" into "the book could not be read" — for
+        a document consulted only where the answer was already going to be no
+        tree."""
+        path = build_epub(
+            tmp_path / "b.epub",
+            {"a.xhtml": self.CALIBRE},
+            ncx=[("Chapter One", "a.xhtml#c1", [])],
+        )
+        corrupt_member(path, "OEBPS/toc.ncx")
+
+        markdown, report = extract(path)
+
+        assert detect_structure(markdown) == []
+        assert "First chapter prose." in markdown
         assert any("no <h1>-<h6> element" in reason for reason in report.declines)  # type: ignore[attr-defined]
 
 

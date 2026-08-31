@@ -725,7 +725,11 @@ def read_navigation(archive: zipfile.ZipFile) -> tuple[NavPoint, ...]:
                 if kind == "ncx"
                 else _nav_points(read_text(archive, member), posixpath.dirname(member))
             )
-        except ParseFailure:
+        except (ParseFailure, zipfile.BadZipFile):
+            # `BadZipFile` because a member whose stored bytes no longer match
+            # their checksum raises on the read rather than on the parse, and a
+            # damaged navigation document must cost the navigation rather than
+            # the book.
             continue
         if points:
             return points

@@ -684,6 +684,69 @@ class TestCalibratingTheLadderAgainstTheOutline:
         assert not any("RUNNING HEAD" in line for line in heading_lines(markdown))
 
 
+def build_stale_entry_pdf(path: Path) -> Path:
+    """A book whose outline names a chapter that is not on the page it names.
+
+    The entry is "Notes", declared on page 2 and set nowhere in the book. Page 3
+    opens with the tail of the previous chapter, a line of prose beginning with
+    the same word — the shape that makes an unlocated short entry dangerous
+    rather than merely useless.
+    """
+    document = pymupdf.open()
+    for chapter in range(1, 5):
+        page = document.new_page()
+        page.insert_text((72, 40), "A RUNNING HEAD", fontsize=16.0, fontname=SERIF)
+        y = 90.0
+        if chapter == 3:
+            page.insert_text(
+                (72, y), "Notes on the chapter before", fontsize=BODY_POINTS, fontname=SERIF
+            )
+            y += 40.0
+        page.insert_text((72, y), f"Chapter {chapter}", fontsize=14.0, fontname=SERIF)
+        page.insert_textbox(
+            pymupdf.Rect(72, y + 30, 520, 700), PROSE * 3, fontsize=BODY_POINTS, fontname=SERIF
+        )
+    outline: list[list[object]] = [[1, "Chapter 1", 1], [1, "Notes", 2]]
+    outline += [[1, f"Chapter {chapter}", chapter] for chapter in range(3, 5)]
+    document.set_toc(outline)
+    document.save(path)
+    document.close()
+    return path
+
+
+class TestAnEntryThatNeverLocatesItself:
+    """An entry the search passes without finding stays in front of it for the
+    rest of the book. What that costs depends entirely on how the page it names
+    is enforced."""
+
+    def test_a_stale_entry_does_not_match_a_line_on_a_later_page(
+        self, tmp_path: Path
+    ) -> None:
+        """The entry says page 2 and the line is on page 3, so it is not that
+        entry — however well the words match. Matching it anyway does not merely
+        invent one heading: a body line marked as a declared chapter is what the
+        rung calibration then learns the chapter rung from."""
+        path = build_stale_entry_pdf(tmp_path / "b.pdf")
+
+        markdown, _ = extract(path)
+
+        assert not any("Notes on the chapter before" in line for line in heading_lines(markdown))
+        assert "Notes on the chapter before" in markdown
+
+    def test_the_chapters_around_it_are_still_found(self, tmp_path: Path) -> None:
+        """The entry costs its own chapter and nothing else — including nothing
+        of the entries behind it, which are still reachable on their own pages."""
+        path = build_stale_entry_pdf(tmp_path / "b.pdf")
+        log: list[str] = []
+
+        result = PdfExtractor().extract(path, log.append)
+
+        assert [line for line in heading_lines(result.markdown) if "Chapter" in line] == [
+            "# Chapter 1", "# Chapter 2", "# Chapter 3", "# Chapter 4"
+        ]
+        assert any("outline: 3/4 matched" in line for line in log)
+
+
 class TestWhatTheOutlineIsReportedAs:
     """Three states, and the middle one is an alarm rather than a fact about the
     book: an outline present with nothing located means the heading rule or the

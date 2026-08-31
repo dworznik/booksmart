@@ -31,6 +31,26 @@ class TestNormalise:
     def test_a_title_of_nothing_but_punctuation_normalises_to_nothing(self) -> None:
         assert normalise("— · —") == ""
 
+    def test_an_accented_letter_is_a_letter(self) -> None:
+        """Keyed on ASCII, "Café Society" normalised to "caf society" — the
+        accented letters deleted as though they were punctuation."""
+        assert normalise("Café Society") == "café society"
+        assert normalise("Übung") == "übung"
+
+    def test_a_title_in_another_script_does_not_normalise_to_nothing(self) -> None:
+        """The silent case. A book whose titles are not Latin normalised every one
+        of them to the empty string, which matches nothing — so a PDF reported its
+        whole outline as unlocated, and an EPUB emitted every declared title in
+        front of the line already carrying it."""
+        assert normalise("Глава 4") == "глава 4"
+        assert normalise("第四章") == "第四章"
+
+    def test_case_folds_beyond_lowercasing(self) -> None:
+        """`casefold`, not `lower`: German ß and SS are the same title set two
+        ways, and a publisher's outline routinely sets in caps what the page
+        does not."""
+        assert normalise("STRASSE") == normalise("Straße")
+
 
 class TestTitlesMatch:
     def test_the_same_title_spelled_two_ways_matches(self) -> None:
@@ -50,6 +70,11 @@ class TestTitlesMatch:
         """Containment runs the other way just as often — a bookmark shortened to
         fit a pane, against the full title on the page."""
         assert titles_match("Chapter 4: A Title, and Its Longer Subtitle", "Chapter 4: A Title")
+
+    def test_titles_in_another_script_match_and_differ_like_any_other(self) -> None:
+        assert titles_match("Глава 4", "Глава 4: Заголовок")
+        assert not titles_match("Глава 4", "Глава 5")
+        assert title_remainder("Глава 4", "Глава 4: Заголовок") == "заголовок"
 
     def test_a_different_title_does_not_match(self) -> None:
         assert not titles_match("Chapter 4: A Title", "Chapter 5: Another")
