@@ -856,6 +856,45 @@ class TestTheFurnitureFilter:
 
         assert report.skipped_documents == 0  # type: ignore[attr-defined]
 
+    def test_a_chapter_opener_is_kept_however_little_text_it_carries(
+        self, tmp_path: Path
+    ) -> None:
+        """A decorative image, the title, a byline, and the body in the next
+        document. It satisfies both of the other conjuncts and is not furniture:
+        one converted book loses 4 of its 26 chapter-level headings this way."""
+        path = build_epub(
+            tmp_path / "b.epub",
+            {
+                "opener.xhtml": '<h2><img src="opener.png"/>2<br/>Meaningful Titles</h2>'
+                "<p>by A Contributor</p>",
+                "body.xhtml": "<p>" + "The chapter itself. " * 30 + "</p>",
+            },
+            manifest={"o": "opener.xhtml", "b": "body.xhtml"},
+            spine=["o", "b"],
+        )
+
+        markdown, report = extract(path)
+
+        assert report.skipped_documents == 0  # type: ignore[attr-defined]
+        assert "Meaningful Titles" in markdown
+
+    def test_a_picture_page_with_no_heading_is_still_skipped(self, tmp_path: Path) -> None:
+        """The heading exemption must not swallow the rule it guards: the
+        listing-screenshot pages it was written for carry no heading."""
+        path = build_epub(
+            tmp_path / "b.epub",
+            {
+                "a.xhtml": "<h2>Chapter</h2><p>" + "Real content. " * 30 + "</p>",
+                "shot.xhtml": '<p><img src="listing-4-2.png"/></p><p>Figure 4-2</p>',
+            },
+            manifest={"a": "a.xhtml", "s": "shot.xhtml"},
+            spine=["a", "s"],
+        )
+
+        _, report = extract(path)
+
+        assert report.skipped_documents == 1  # type: ignore[attr-defined]
+
 
 class TestDeclines:
     def test_a_book_no_rule_matches_declines_with_its_evidence(self, tmp_path: Path) -> None:
