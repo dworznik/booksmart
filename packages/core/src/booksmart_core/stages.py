@@ -67,9 +67,13 @@ class StageReport:
 
     Embedding tokens are counted apart from ``input_tokens`` rather than added
     to it: they are billed at a different rate, so a consumer costing a run
-    needs the two totals separately. Where they end up is the Runner's call —
-    the Run row this repo's Runner writes has no column for them yet, so today
-    they reach a consumer through the report and the run log."""
+    needs the two totals separately.
+
+    The clock is the Stage's own, taken either side of its work rather than by
+    the Runner around the call. A Runner that is not this one — a durable
+    step-based executor, say — may wait, retry or resume between dispatching a
+    Stage and seeing its report, and the interval it could measure would include
+    all of that. What a Stage took is a question about the Stage."""
 
     stage: Stage
     log_lines: tuple[str, ...] = ()
@@ -77,6 +81,8 @@ class StageReport:
     output_tokens: int = 0
     embedding_tokens: int = 0
     counts: Mapping[str, int] = field(default_factory=dict)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 def _show_count(count: int | None) -> str:
@@ -93,6 +99,9 @@ class _ReportBuilder:
         self.output_tokens = 0
         self.embedding_tokens = 0
         self.counts: dict[str, int] = {}
+        # Every Stage builds one of these as its first act and freezes it as its
+        # last, so construction and `finish` bracket the Stage's own work.
+        self.started_at = datetime.now(UTC)
 
     def log(self, line: str) -> None:
         self._log_lines.append(f"{datetime.now(UTC).isoformat()} {line}")
@@ -119,6 +128,8 @@ class _ReportBuilder:
             output_tokens=self.output_tokens,
             embedding_tokens=self.embedding_tokens,
             counts=dict(self.counts),
+            started_at=self.started_at,
+            finished_at=datetime.now(UTC),
         )
 
 
