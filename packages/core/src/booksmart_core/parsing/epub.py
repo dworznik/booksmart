@@ -875,7 +875,26 @@ def _by_member(
 
 
 def is_furniture(document: Element) -> bool:
-    """Whether a spine document is a picture of content rather than content."""
+    """Whether a spine document is a picture of content rather than content.
+
+    A document that declares a heading is never furniture, whatever else it
+    holds. The image-and-short-text pair describes a listing screenshot, which
+    carries no heading; it also describes a **chapter opener** — a decorative
+    image, the chapter title, and a byline, with the body starting in the next
+    spine document — and dropping one of those takes the chapter's heading with
+    it. The chapter does not go missing when that happens: `detect_structure`
+    sees the next heading down, so the whole chapter's sections are parented to
+    the *preceding* chapter and every location extracted from it names the wrong
+    one. Silence would be better than that.
+
+    Measured on one Calibre-converted book, where the openers of the
+    contributed chapters are separate documents and the author's own are not: 4
+    of its 26 `<h2>` were lost this way, and the two documents that genuinely
+    are furniture in the same book carry no heading at all. That is the whole
+    discriminator, and it is why this is a conjunct rather than a threshold.
+    """
+    if any(child.tag in HEADINGS for child in document.descendants()):
+        return False
     has_image = any(child.tag in {"img", "image"} for child in document.descendants())
     return has_image and len(document.text().strip()) < FURNITURE_CHARACTERS
 
