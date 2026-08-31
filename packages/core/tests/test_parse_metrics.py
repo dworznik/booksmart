@@ -23,6 +23,7 @@ from booksmart_core.parse_metrics import (
     source_text_of,
     suspect_headings,
 )
+from booksmart_core.structure import detect_structure
 
 from . import documents
 
@@ -197,6 +198,50 @@ class TestSuspectHeadings:
         markdown = "```python\n# extract(path)\ndef parse(self):\n```"
 
         assert suspect_headings(markdown) == ()
+
+    def test_two_stray_hashes_demote_every_real_chapter(self) -> None:
+        """Why the count is worth reporting at all, stated as severity rather than
+        as a number. One stray `#` is harmless — `detect_structure` discards a lone
+        top-level heading as the book's title. Two set the chapter level to 1 and
+        every real chapter in the book becomes a section of a comment."""
+        hijacked = "\n\n".join(
+            [
+                "# def parse(self):",
+                "parser = Parser()",
+                "# run(parser, path)",
+                "## Chapter One",
+                "prose",
+                "## Chapter Two",
+                "more prose",
+            ]
+        )
+
+        assert len(suspect_headings(hijacked)) == 2
+        assert [chapter.title for chapter in detect_structure(hijacked)] == [
+            "def parse(self):",
+            "run(parser, path)",
+        ]
+
+    def test_a_fenced_listing_never_reaches_structure_detection(self) -> None:
+        """The same two lines, fenced the way an extractor fences them. Nothing
+        is counted, and the book has the chapters it actually has — which is what
+        the counter is *for*: it is zero while the escaper holds, and the moment
+        it is not, this is the failure it is reporting."""
+        fenced = "\n\n".join(
+            [
+                "```python\n# def parse(self):\nparser = Parser()\n# run(parser, path)\n```",
+                "## Chapter One",
+                "prose",
+                "## Chapter Two",
+                "more prose",
+            ]
+        )
+
+        assert suspect_headings(fenced) == ()
+        assert [chapter.title for chapter in detect_structure(fenced)] == [
+            "Chapter One",
+            "Chapter Two",
+        ]
 
 
 class TestMeasure:

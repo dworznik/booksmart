@@ -19,7 +19,14 @@ from typing import Literal, Protocol
 # is the route names below. Rows written under "1" are left alone: `marker` and
 # `pymupdf` are true statements about what produced those artifacts, and the
 # version stamp is what says which vocabulary to read a row in.
-EXTRACTION_VERSION = "2"
+#
+# "3" keeps "2"'s route vocabulary and changes what a heading is. Both routes now
+# read the chapter tree the container declares — a PDF's bookmark outline, an
+# EPUB's NCX or nav document — where before both inferred one and neither asked;
+# and where the PDF route still infers, a size has to head enough of the document
+# to spend one of the six levels. Heading counts move on most documents, so a
+# row's structure is only comparable with another row's at the same stamp.
+EXTRACTION_VERSION = "3"
 
 Route = Literal["epub", "pdf", "pdf-ocr"]
 

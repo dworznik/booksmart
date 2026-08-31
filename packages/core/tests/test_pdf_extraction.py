@@ -86,6 +86,41 @@ def build_pdf(
     return path
 
 
+def build_sectioned_pdf(
+    path: Path,
+    display_lines: list[tuple[str, float]],
+    *,
+    body_points: float = BODY_POINTS,
+    outline: list[list[object]] | None = None,
+) -> Path:
+    """A PDF of `(text, points)` display lines, each followed by a little prose.
+
+    Long on purpose. A population is only negligible *relative to* how many
+    candidate lines the document has, so the rule that discards one cannot be
+    stated on a four-page fixture — the same one-off size that is furniture in a
+    three-hundred-heading book is a real level in a five-heading one.
+    """
+    document = pymupdf.open()
+    page = document.new_page()
+    y = 60.0
+    height = 3 * body_points * 1.4
+    for text, points in display_lines:
+        if y + points * 2 + height > 720:
+            page = document.new_page()
+            y = 60.0
+        page.insert_text((72, y), text, fontsize=points, fontname=SERIF)
+        y += points * 2
+        page.insert_textbox(
+            pymupdf.Rect(72, y, 520, y + height), PROSE, fontsize=body_points, fontname=SERIF
+        )
+        y += height + body_points
+    if outline is not None:
+        document.set_toc(outline)
+    document.save(path)
+    document.close()
+    return path
+
+
 LISTING = ["def parse(self):", "    if self.ready:", "        return 1", "    return 0"]
 
 
@@ -100,6 +135,10 @@ def typography(path: Path) -> object:
         return read_typography(read_lines(document))
     finally:
         document.close()
+
+
+def heading_lines(markdown: str) -> list[str]:
+    return [line for line in markdown.split("\n") if line.startswith("#")]
 
 
 def fence_bodies(markdown: str) -> list[str]:
@@ -414,6 +453,525 @@ class TestHeadings:
 
         assert len(chapters) == 4
         assert "Building Abstractions" in chapters[0].title
+
+
+class TestTheSixLevelsAreSpentOnRealLevels:
+    """There are six heading levels and a book has as many as it has. What decides
+    which sizes get them has to be *how much of the book each size heads*, because
+    the alternative — size alone — hands them to whatever is set biggest, and what
+    is set biggest is usually the title page."""
+
+    def test_a_one_off_display_size_does_not_spend_a_heading_level(
+        self, tmp_path: Path
+    ) -> None:
+        """A title page, a part number, a colophon and a dedication are each set
+        once, in a large size, and sort straight to the top of the size list. Five
+        of them fill five of the six slots and push the size that heads a hundred
+        sections off the end — reporting a book of hundreds of headings as a book
+        of five."""
+        display = [
+            (f"Display {number}", points)
+            for number, points in enumerate((30.0, 28.0, 26.0, 24.0, 22.0), start=1)
+        ]
+        sections = [(f"Section {number}", 14.0) for number in range(1, 101)]
+        path = build_sectioned_pdf(tmp_path / "b.pdf", display + sections)
+
+        markdown, _ = extract(path)
+
+        headings = heading_lines(markdown)
+        assert len(headings) == 100
+        assert all(line.startswith("# Section ") for line in headings)
+
+    def test_a_level_rendered_across_several_tenths_occupies_one_slot(
+        self, tmp_path: Path
+    ) -> None:
+        """One typographic level routinely renders across several adjacent tenths
+        of a point. Keyed on the tenth, it takes a slot per tenth — observed at
+        four for a single level, leaving two for the whole rest of the tree."""
+        display: list[tuple[str, float]] = []
+        for chapter in range(1, 13):
+            display.append((f"Chapter {chapter}", 20.0 + (chapter % 4) * 0.1))
+            display += [(f"Section {chapter}.{number}", 14.0) for number in range(1, 4)]
+        path = build_sectioned_pdf(tmp_path / "b.pdf", display)
+
+        markdown, _ = extract(path)
+
+        headings = heading_lines(markdown)
+        assert {line.split(" ", 1)[0] for line in headings if "Chapter" in line} == {"#"}
+        assert {line.split(" ", 1)[0] for line in headings if "Section" in line} == {"##"}
+
+    def test_display_sizes_half_a_point_apart_do_not_pool_into_a_level(
+        self, tmp_path: Path
+    ) -> None:
+        """The two rules interact, and the tolerance is what keeps them honest. A
+        purely relative tolerance grows with the size — at 30pt it reaches 0.6pt —
+        until distinct pieces of furniture chain into one cluster whose *summed*
+        population clears the floor that would have discarded each of them."""
+        display = [
+            (f"Display {number}", points)
+            for number, points in enumerate((30.0, 29.5, 29.0), start=1)
+        ]
+        sections = [(f"Section {number}", 14.0) for number in range(1, 101)]
+        path = build_sectioned_pdf(tmp_path / "b.pdf", display + sections)
+
+        markdown, _ = extract(path)
+
+        headings = heading_lines(markdown)
+        assert len(headings) == 100
+        assert all(line.startswith("# Section ") for line in headings)
+
+    def test_a_short_document_keeps_every_size_it_has(self, tmp_path: Path) -> None:
+        """The floor is a share of the document's own candidate lines, never a
+        count. In a document with three headings in it, all three are the book."""
+        path = build_pdf(
+            tmp_path / "b.pdf",
+            [
+                {"heading": ("Part One", 24.0), "prose": 8},
+                {"heading": ("Chapter One", 18.0), "prose": 8},
+                {"heading": ("A Section", 13.0), "prose": 8},
+            ],
+        )
+
+        markdown, _ = extract(path)
+
+        assert heading_lines(markdown) == ["# Part One", "## Chapter One", "### A Section"]
+
+
+def build_three_tier_pdf(path: Path, *, outline: list[list[object]] | None = None) -> Path:
+    """A book with a running head above its chapters and sections under them.
+
+    Four sizes, three of which are structure: 16pt runs across the top of every
+    page and is not a chapter, 14pt opens each chapter, 12pt opens each section,
+    10pt is the body. What the outline is for is telling the first of those from
+    the second, which nothing typographic can.
+    """
+    document = pymupdf.open()
+    for chapter in range(1, 5):
+        page = document.new_page()
+        page.insert_text((72, 40), "A RUNNING HEAD", fontsize=16.0, fontname=SERIF)
+        page.insert_text((72, 90), f"Chapter {chapter}", fontsize=14.0, fontname=SERIF)
+        page.insert_textbox(
+            pymupdf.Rect(72, 120, 520, 300), PROSE * 2, fontsize=BODY_POINTS, fontname=SERIF
+        )
+        page.insert_text((72, 330), f"Section {chapter}.1", fontsize=12.0, fontname=SERIF)
+        page.insert_textbox(
+            pymupdf.Rect(72, 360, 520, 700), PROSE * 3, fontsize=BODY_POINTS, fontname=SERIF
+        )
+    if outline is not None:
+        document.set_toc(outline)
+    document.save(path)
+    document.close()
+    return path
+
+
+class TestCalibratingTheLadderAgainstTheOutline:
+    """The outline says which rung of the size ladder the chapters are on. That
+    is a different thing from saying which lines are headings, and it is what
+    `detect_structure` cannot work out for itself — it takes the smallest level
+    present, so one line set larger than the chapter openers demotes every real
+    chapter in the book."""
+
+    def test_the_outline_says_which_rung_is_a_chapter(self, tmp_path: Path) -> None:
+        path = build_three_tier_pdf(
+            tmp_path / "b.pdf",
+            outline=[[1, f"Chapter {chapter}", chapter] for chapter in range(1, 5)],
+        )
+
+        markdown, _ = extract(path)
+        chapters = detect_structure(markdown)
+
+        assert [chapter.title for chapter in chapters] == [
+            "Chapter 1", "Chapter 2", "Chapter 3", "Chapter 4"
+        ]
+        assert [section.title for section in chapters[0].sections] == ["Section 1.1"]
+
+    def test_a_chapter_the_outline_omits_is_still_a_chapter(self, tmp_path: Path) -> None:
+        """The outline sets the level, not the set. An outline listing three of
+        four chapters leaves the fourth to the ladder — and the ladder now knows
+        what that rung means."""
+        path = build_three_tier_pdf(
+            tmp_path / "b.pdf",
+            outline=[[1, f"Chapter {chapter}", chapter] for chapter in range(1, 4)],
+        )
+
+        markdown, _ = extract(path)
+
+        assert "# Chapter 4" in heading_lines(markdown)
+
+    def test_a_section_matching_no_entry_keeps_its_place_under_the_chapters(
+        self, tmp_path: Path
+    ) -> None:
+        """Outlines commonly list chapters only, so most section headings match
+        nothing by design. Pruning them would destroy the section tree."""
+        path = build_three_tier_pdf(
+            tmp_path / "b.pdf",
+            outline=[[1, f"Chapter {chapter}", chapter] for chapter in range(1, 5)],
+        )
+
+        markdown, _ = extract(path)
+
+        assert [line for line in heading_lines(markdown) if "Section" in line] == [
+            "## Section 1.1", "## Section 2.1", "## Section 3.1", "## Section 4.1"
+        ]
+
+    def test_nothing_above_the_chapter_rung_is_a_heading(self, tmp_path: Path) -> None:
+        """What the calibration is worth. The running head is the biggest thing on
+        every page and the outline does not name it."""
+        path = build_three_tier_pdf(
+            tmp_path / "b.pdf",
+            outline=[[1, f"Chapter {chapter}", chapter] for chapter in range(1, 5)],
+        )
+
+        markdown, _ = extract(path)
+
+        assert not any("RUNNING HEAD" in line for line in heading_lines(markdown))
+
+    def test_without_an_outline_every_rung_is_kept(self, tmp_path: Path) -> None:
+        """Calibration is a bonus signal, never a prerequisite. With nothing to
+        calibrate against the ladder answers alone — and the running head is a
+        chapter, which is exactly the state of affairs an outline ends."""
+        path = build_three_tier_pdf(tmp_path / "b.pdf")
+
+        markdown, _ = extract(path)
+
+        assert "# A RUNNING HEAD" in heading_lines(markdown)
+        assert "## Chapter 1" in heading_lines(markdown)
+        assert "### Section 1.1" in heading_lines(markdown)
+
+    def test_a_deeper_outline_puts_its_chapters_under_its_parts(
+        self, tmp_path: Path
+    ) -> None:
+        """A rung's level is the one the publisher stated for it, not its distance
+        from the top of the ladder. Where the outline nests, the ladder nests with
+        it."""
+        outline: list[list[object]] = [[1, "A RUNNING HEAD", 1]]
+        outline += [[2, f"Chapter {chapter}", chapter] for chapter in range(1, 5)]
+        path = build_three_tier_pdf(tmp_path / "b.pdf", outline=outline)
+
+        markdown, _ = extract(path)
+
+        assert "# A RUNNING HEAD" in heading_lines(markdown)
+        assert "## Chapter 1" in heading_lines(markdown)
+        assert "### Section 1.1" in heading_lines(markdown)
+
+    def test_an_invisible_character_does_not_lose_the_match(self, tmp_path: Path) -> None:
+        """A heading differing from the outline's by a character nothing renders
+        stops matching silently, and one real book carries a zero-width space in
+        several hundred of its lines."""
+        path = build_three_tier_pdf(
+            tmp_path / "b.pdf",
+            outline=[[1, f"Chapter\u200b {chapter}", chapter] for chapter in range(1, 5)],
+        )
+
+        markdown, _ = extract(path)
+
+        assert not any("RUNNING HEAD" in line for line in heading_lines(markdown))
+        assert "# Chapter 1" in heading_lines(markdown)
+
+    def test_an_entry_spelled_longer_than_the_page_still_matches(
+        self, tmp_path: Path
+    ) -> None:
+        """Containment either way. Outlines spell an entry as `Chapter 4: A Title`
+        while the page sets the number alone."""
+        path = build_three_tier_pdf(
+            tmp_path / "b.pdf",
+            outline=[[1, f"Chapter {chapter}: A Title", chapter] for chapter in range(1, 5)],
+        )
+
+        markdown, _ = extract(path)
+
+        assert "# Chapter 1" in heading_lines(markdown)
+        assert not any("RUNNING HEAD" in line for line in heading_lines(markdown))
+
+
+def build_stale_entry_pdf(path: Path) -> Path:
+    """A book whose outline names a chapter that is not on the page it names.
+
+    The entry is "Notes", declared on page 2 and set nowhere in the book. Page 3
+    opens with the tail of the previous chapter, a line of prose beginning with
+    the same word — the shape that makes an unlocated short entry dangerous
+    rather than merely useless.
+    """
+    document = pymupdf.open()
+    for chapter in range(1, 5):
+        page = document.new_page()
+        page.insert_text((72, 40), "A RUNNING HEAD", fontsize=16.0, fontname=SERIF)
+        y = 90.0
+        if chapter == 3:
+            page.insert_text(
+                (72, y), "Notes on the chapter before", fontsize=BODY_POINTS, fontname=SERIF
+            )
+            y += 40.0
+        page.insert_text((72, y), f"Chapter {chapter}", fontsize=14.0, fontname=SERIF)
+        page.insert_textbox(
+            pymupdf.Rect(72, y + 30, 520, 700), PROSE * 3, fontsize=BODY_POINTS, fontname=SERIF
+        )
+    outline: list[list[object]] = [[1, "Chapter 1", 1], [1, "Notes", 2]]
+    outline += [[1, f"Chapter {chapter}", chapter] for chapter in range(3, 5)]
+    document.set_toc(outline)
+    document.save(path)
+    document.close()
+    return path
+
+
+class TestAnEntryThatNeverLocatesItself:
+    """An entry the search passes without finding stays in front of it for the
+    rest of the book. What that costs depends entirely on how the page it names
+    is enforced."""
+
+    def test_a_stale_entry_does_not_match_a_line_on_a_later_page(
+        self, tmp_path: Path
+    ) -> None:
+        """The entry says page 2 and the line is on page 3, so it is not that
+        entry — however well the words match. Matching it anyway does not merely
+        invent one heading: a body line marked as a declared chapter is what the
+        rung calibration then learns the chapter rung from."""
+        path = build_stale_entry_pdf(tmp_path / "b.pdf")
+
+        markdown, _ = extract(path)
+
+        assert not any("Notes on the chapter before" in line for line in heading_lines(markdown))
+        assert "Notes on the chapter before" in markdown
+
+    def test_the_chapters_around_it_are_still_found(self, tmp_path: Path) -> None:
+        """The entry costs its own chapter and nothing else — including nothing
+        of the entries behind it, which are still reachable on their own pages."""
+        path = build_stale_entry_pdf(tmp_path / "b.pdf")
+        log: list[str] = []
+
+        result = PdfExtractor().extract(path, log.append)
+
+        assert [line for line in heading_lines(result.markdown) if "Chapter" in line] == [
+            "# Chapter 1", "# Chapter 2", "# Chapter 3", "# Chapter 4"
+        ]
+        assert any("outline: 3/4 matched" in line for line in log)
+
+
+class TestWhatTheOutlineIsReportedAs:
+    """Three states, and the middle one is an alarm rather than a fact about the
+    book: an outline present with nothing located means the heading rule or the
+    matcher is broken. It must not read the same as a book with no outline."""
+
+    def test_a_document_with_no_outline_reports_it_as_absent(self, tmp_path: Path) -> None:
+        path = build_three_tier_pdf(tmp_path / "b.pdf")
+        log: list[str] = []
+
+        PdfExtractor().extract(path, log.append)
+
+        assert any("outline: absent" in line for line in log)
+
+    def test_an_outline_matching_nothing_reports_the_count(self, tmp_path: Path) -> None:
+        path = build_three_tier_pdf(
+            tmp_path / "b.pdf", outline=[[1, "Not On Any Page", 1], [1, "Nor This", 2]]
+        )
+        log: list[str] = []
+
+        PdfExtractor().extract(path, log.append)
+
+        assert any("outline: 0/2 matched" in line for line in log)
+        assert not any("outline: absent" in line for line in log)
+
+    def test_an_outline_matching_nothing_falls_back_and_does_not_decline(
+        self, tmp_path: Path
+    ) -> None:
+        """An alarm about the outline is not a verdict on the book. With nothing
+        to calibrate against the ladder answers alone, every rung it found intact,
+        and a document that plainly has headings does not claim to have none."""
+        path = build_three_tier_pdf(
+            tmp_path / "b.pdf", outline=[[1, "Not On Any Page", 1], [1, "Nor This", 2]]
+        )
+
+        markdown, report = extract(path)
+
+        assert heading_lines(markdown)[:3] == [
+            "# A RUNNING HEAD", "## Chapter 1", "### Section 1.1"
+        ]
+        assert not any("no size contrast" in reason for reason in report.declines)  # type: ignore[attr-defined]
+
+    def test_an_outline_the_ladder_cannot_see_calibrates_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """The cliff the calibration refuses to walk off. Every entry here names a
+        line set at the body size, so the ladder ranks none of them — and reading
+        that as "everything the ladder *can* see outranks the chapters" would
+        discard the whole ladder on the word of a single line it missed."""
+        document = pymupdf.open()
+        for number in range(1, 5):
+            page = document.new_page()
+            page.insert_text((72, 40), "A RUNNING HEAD", fontsize=16.0, fontname=SERIF)
+            page.insert_text((72, 80), f"Chapter {number}", fontsize=BODY_POINTS, fontname=SERIF)
+            page.insert_textbox(
+                pymupdf.Rect(72, 110, 520, 700), PROSE * 4, fontsize=BODY_POINTS, fontname=SERIF
+            )
+        document.set_toc([[1, f"Chapter {number}", number] for number in range(1, 5)])
+        path = tmp_path / "b.pdf"
+        document.save(path)
+        document.close()
+
+        markdown, _ = extract(path)
+
+        assert "# A RUNNING HEAD" in heading_lines(markdown)
+        assert "# Chapter 1" in heading_lines(markdown)
+
+    def test_an_outline_that_locates_itself_reports_how_much_of_it_did(
+        self, tmp_path: Path
+    ) -> None:
+        outline: list[list[object]] = [[1, f"Chapter {chapter}", chapter] for chapter in range(1, 5)]
+        outline.append([1, "A Chapter That Is Not There", 4])
+        path = build_three_tier_pdf(tmp_path / "b.pdf", outline=outline)
+        log: list[str] = []
+
+        PdfExtractor().extract(path, log.append)
+
+        assert any("outline: 4/5 matched" in line for line in log)
+
+
+class TestTheDeclaredOutline:
+    """A PDF's bookmark outline is the publisher's own statement of the book's
+    chapter tree. Inferring one from font sizes beside it is answering from
+    evidence when the answer was already given."""
+
+    def test_the_heading_set_comes_from_the_outline(self, tmp_path: Path) -> None:
+        """None of these titles is set larger than the body, so there is no size
+        ladder to find them by — and the document still has a chapter tree."""
+        display: list[tuple[str, float]] = []
+        outline: list[list[object]] = []
+        for chapter in range(1, 5):
+            display.append((f"Chapter {chapter}", BODY_POINTS))
+            display.append((f"Section {chapter}.1", BODY_POINTS))
+        path = build_sectioned_pdf(tmp_path / "b.pdf", display)
+        # Page numbers come from where the lines actually landed, so the outline
+        # is read back from the built document rather than guessed at.
+        document = pymupdf.open(path)
+        pages = {}
+        for number in range(document.page_count):
+            for line in document[number].get_text().split("\n"):
+                pages.setdefault(line.strip(), number + 1)
+        document.close()
+        for chapter in range(1, 5):
+            outline.append([1, f"Chapter {chapter}", pages[f"Chapter {chapter}"]])
+            outline.append([2, f"Section {chapter}.1", pages[f"Section {chapter}.1"]])
+        path = build_sectioned_pdf(tmp_path / "b.pdf", display, outline=outline)
+
+        markdown, report = extract(path)
+
+        assert heading_lines(markdown) == [
+            "# Chapter 1", "## Section 1.1",
+            "# Chapter 2", "## Section 2.1",
+            "# Chapter 3", "## Section 3.1",
+            "# Chapter 4", "## Section 4.1",
+        ]
+        assert not any("no size contrast" in reason for reason in report.declines)  # type: ignore[attr-defined]
+
+    def test_a_line_the_outline_does_not_declare_is_not_a_heading(
+        self, tmp_path: Path
+    ) -> None:
+        """A running head is set large on every page and is not a chapter, and the
+        outline is what says so. The chapter openers have to be somewhere on the
+        size ladder for that to be sayable — a rung is what the outline names, and
+        an outline that names nothing the ladder can see says nothing about which
+        rungs outrank the chapters."""
+        document = pymupdf.open()
+        for number in range(1, 5):
+            page = document.new_page()
+            page.insert_text((72, 40), "A RUNNING HEAD", fontsize=16.0, fontname=SERIF)
+            page.insert_text((72, 80), f"Chapter {number}", fontsize=12.0, fontname=SERIF)
+            page.insert_textbox(
+                pymupdf.Rect(72, 110, 520, 700), PROSE * 4, fontsize=BODY_POINTS, fontname=SERIF
+            )
+        document.set_toc([[1, f"Chapter {number}", number] for number in range(1, 5)])
+        path = tmp_path / "b.pdf"
+        document.save(path)
+        document.close()
+
+        markdown, _ = extract(path)
+
+        assert heading_lines(markdown) == [
+            "# Chapter 1", "# Chapter 2", "# Chapter 3", "# Chapter 4"
+        ]
+
+    def test_an_outline_that_locates_nothing_falls_back_to_the_size_ladder(
+        self, tmp_path: Path
+    ) -> None:
+        """A stale outline, or one whose titles are not the text on the page, is
+        not a statement anything can act on. Falling back is the honest answer;
+        emitting the handful of entries that happened to match is not."""
+        path = build_pdf(
+            tmp_path / "b.pdf",
+            [
+                {"heading": ("Part One", 24.0), "prose": 8},
+                {"heading": ("Chapter One", 18.0), "prose": 8},
+                {"heading": ("A Section", 13.0), "prose": 8},
+            ],
+        )
+        document = pymupdf.open(path)
+        document.set_toc([[1, "A Destination That Is Not On Any Page", 1]])
+        stale = tmp_path / "stale.pdf"
+        document.save(stale)
+        document.close()
+
+        markdown, _ = extract(stale)
+
+        assert heading_lines(markdown) == ["# Part One", "## Chapter One", "### A Section"]
+
+    def test_a_declared_title_that_wraps_is_one_heading(self, tmp_path: Path) -> None:
+        """One entry in the outline, two lines on the paper. Taking only the first
+        line loses half of every long chapter title; taking them as two headings
+        gives the book twice the chapters it has."""
+        document = pymupdf.open()
+        page = document.new_page()
+        page.insert_text((72, 60), "Chapter 2", fontsize=BODY_POINTS, fontname=SERIF)
+        page.insert_text((72, 74), "Reading The Container", fontsize=BODY_POINTS, fontname=SERIF)
+        page.insert_textbox(
+            pymupdf.Rect(72, 110, 520, 700), PROSE * 4, fontsize=BODY_POINTS, fontname=SERIF
+        )
+        document.set_toc([[1, "Chapter 2: Reading The Container", 1]])
+        path = tmp_path / "b.pdf"
+        document.save(path)
+        document.close()
+
+        markdown, _ = extract(path)
+
+        assert heading_lines(markdown) == ["# Chapter 2 Reading The Container"]
+
+    def test_a_declared_line_inside_a_listing_is_still_a_listing(
+        self, tmp_path: Path
+    ) -> None:
+        """ADR 0003 is not negotiable by the outline. A destination landing in the
+        middle of a code run does not open a fence and take a line out of it."""
+        path = build_pdf(
+            tmp_path / "b.pdf",
+            [{"prose": 8, "code": (LISTING, MONO, 9.0, 0)} for _ in range(4)],
+        )
+        document = pymupdf.open(path)
+        document.set_toc([[1, "def parse(self):", number] for number in range(1, 5)])
+        declared = tmp_path / "declared.pdf"
+        document.save(declared)
+        document.close()
+
+        markdown, _ = extract(declared)
+
+        assert heading_lines(markdown) == []
+        assert fence_bodies(markdown)
+
+    def test_a_document_with_an_outline_never_declines_its_headings(
+        self, tmp_path: Path
+    ) -> None:
+        document = pymupdf.open()
+        for number in range(1, 5):
+            page = document.new_page()
+            page.insert_text((72, 60), f"Chapter {number}", fontsize=BODY_POINTS, fontname=SERIF)
+            page.insert_textbox(
+                pymupdf.Rect(72, 90, 520, 700), PROSE * 4, fontsize=BODY_POINTS, fontname=SERIF
+            )
+        document.set_toc([[1, f"Chapter {number}", number] for number in range(1, 5)])
+        path = tmp_path / "b.pdf"
+        document.save(path)
+        document.close()
+
+        _, report = extract(path)
+
+        assert not any("no size contrast" in reason for reason in report.declines)  # type: ignore[attr-defined]
 
 
 class TestProse:

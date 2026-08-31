@@ -26,6 +26,12 @@ from typing import Literal
 
 Kind = Literal["heading", "paragraph", "code", "list", "table"]
 
+# How many heading levels there are, which is a fact about GFM rather than a
+# choice: `#######` is not a heading, it is a paragraph beginning with hashes.
+# Named because both extractors have to clamp to it, and a level they clamp
+# differently from what is serialised here would be a level that vanishes.
+MAX_HEADING_LEVEL = 6
+
 # Line-leading characters GFM reads as structure. `*` is deliberately absent:
 # emphasis is emitted faithfully (an EPUB `<h2>` may contain `<em>`, and
 # structure.py unwraps it), so escaping it here would break what it reads.
@@ -96,7 +102,7 @@ def _render(block: Block) -> str:
         # Collapsed to one line: an ATX heading is a line, and a newline inside
         # one silently ends the heading and starts a paragraph.
         title = " ".join(block.text.split())
-        return f"{'#' * max(1, min(block.level, 6))} {title}" if title else ""
+        return f"{'#' * max(1, min(block.level, MAX_HEADING_LEVEL))} {title}" if title else ""
     if block.kind == "code":
         fence = fence_for(block.text)
         body = block.text.rstrip("\n")

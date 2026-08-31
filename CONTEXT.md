@@ -52,6 +52,18 @@ element, a monospace font family, a class of table row. A block records which
 rule produced it, and nothing else: a rule either matched or it did not, so
 there is no confidence attached to one.
 
+**Declared navigation**:
+The chapter tree a container states for itself — a PDF's bookmark outline, an
+EPUB's `toc.ncx` or nav document. It is the publisher's own answer to what the
+chapters are, so an Extractor reads it in preference to inferring one, and
+infers only where there is nothing to read. It answers *structure* and never
+reading order, which is the spine's answer and the spine's alone.
+_Avoid_: table of contents — that is the authored one a consumer scores
+against. Each format's own name for its copy is right where that format is
+what is being discussed (a PDF **outline**, an EPUB **NCX** or **nav
+document**); Declared navigation is the term for the thing they are both
+instances of, and the only one that fits a rule spanning routes.
+
 **Decline**:
 An Extractor's report that a signal it needs is not reliable for this document,
 with the reason. A declining Extractor still produces a full artifact; it
