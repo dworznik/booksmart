@@ -429,7 +429,7 @@ class TestHeadings:
     def test_a_heading_wrapped_across_two_lines_is_one_heading(
         self, tmp_path: Path
     ) -> None:
-        """"Chapter 2" over "Building Abstractions with Data" is one chapter. Two
+        """"Chapter 2" over "Composing Small Parts" is one chapter. Two
         headings there is a chapter tree with twice as many chapters as the book,
         every other one titleless."""
         document = pymupdf.open()
@@ -437,7 +437,7 @@ class TestHeadings:
             page = document.new_page()
             page.insert_textbox(
                 pymupdf.Rect(72, 60, 300, 140),
-                f"Chapter {number} Building Abstractions With Data",
+                f"Chapter {number} Composing Small Parts",
                 fontsize=20.0,
                 fontname=SERIF,
             )
@@ -452,7 +452,7 @@ class TestHeadings:
         chapters = detect_structure(markdown)
 
         assert len(chapters) == 4
-        assert "Building Abstractions" in chapters[0].title
+        assert "Composing Small Parts" in chapters[0].title
 
 
 class TestTheSixLevelsAreSpentOnRealLevels:

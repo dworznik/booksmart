@@ -164,7 +164,7 @@ class TestSuspectHeadings:
     def test_an_ordinary_chapter_title_is_not_suspect(self) -> None:
         markdown = "\n\n".join(
             [
-                "# Chapter 4: Modules Should Be Deep",
+                "# Chapter 4: Interfaces Should Be Narrow",
                 "## Why Interfaces Matter",
                 "### A Note on Naming (And Why It Is Hard)",
                 "# Preface to the Second Edition",

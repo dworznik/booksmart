@@ -33,7 +33,7 @@ from .test_structure_api import ingest
 
 CHAPTER_SUMMARIES = [
     {
-        "chapter_summary": "Modules should be deep.",
+        "chapter_summary": "Interfaces should be narrow.",
         "section_summaries": ["About deep modules.", "About shallow modules."],
     },
     {
@@ -139,7 +139,7 @@ class TestEmbeddingStage:
                 )
             )
             assert [c.summary for c in chapters] == [
-                "Modules should be deep.",
+                "Interfaces should be narrow.",
                 "Symptoms of complexity.",
             ]
             sections = [s for c in chapters for s in c.sections]
@@ -246,7 +246,7 @@ class TestEmbeddingStage:
                 )
             )
             assert [c.summary for c in chapters] == [
-                "Modules should be deep.",
+                "Interfaces should be narrow.",
                 "Symptoms of complexity.",
             ]
 
@@ -387,7 +387,7 @@ class TestEmbeddingStage:
 
         assert len(stub_embedder.batches) == 1  # one batched call per run
         batch = stub_embedder.batches[0]
-        assert "Modules should be deep." in batch  # chapter summary
+        assert "Interfaces should be narrow." in batch  # chapter summary
         assert "About deep modules." in batch  # section summary
         assert any("Deep modules" in text for text in batch)  # knowledge object
 

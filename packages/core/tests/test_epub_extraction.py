@@ -344,12 +344,12 @@ class TestHeadings:
         """An ATX heading is a line. A newline inside one ends the heading and
         starts a paragraph, so the second half of the title would be lost."""
         path = build_epub(
-            tmp_path / "b.epub", {"a.xhtml": "<h2>Modules Should\n   Be Deep</h2>"}
+            tmp_path / "b.epub", {"a.xhtml": "<h2>Interfaces Should\n   Be Narrow</h2>"}
         )
 
         markdown, _ = extract(path)
 
-        assert "## Modules Should Be Deep" in markdown
+        assert "## Interfaces Should Be Narrow" in markdown
 
 
 class TestTheDeclaredNavigation:

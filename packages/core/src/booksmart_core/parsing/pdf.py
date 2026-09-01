@@ -819,7 +819,7 @@ def _prose_blocks(run: _Run, typography: FontProfile) -> list[Block]:
         level = _heading_level(line, typography)
         if level is not None:
             # A title too long for its measure wraps, and the second line is the
-            # same heading — "Chapter 2" / "Building Abstractions with Data" is
+            # same heading — "Chapter 2" / "Composing Small Parts" is
             # one chapter, not two. Only a line directly beneath the previous one,
             # in the same text block and at the same size, joins: the labels of a
             # state diagram are also large, short and adjacent in the artifact,

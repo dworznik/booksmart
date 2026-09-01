@@ -23,3 +23,7 @@ parser-out/
 # Anchored to the repository root: unanchored, `core` also matches `packages/core/`,
 # which hid the whole core package from `git status` and made `git add` refuse it.
 /core
+
+# Agent worktrees: whole nested checkouts of this repo. Untracked and large,
+# and one `git add -A` from being committed into it.
+.claude/

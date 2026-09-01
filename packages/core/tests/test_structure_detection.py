@@ -95,12 +95,12 @@ class TestEmphasisStripping:
         markdown = (
             "# **Chapter 1: Introduction**\n"
             "## **It's All About Complexity**\n"
-            "# **Chapter 2: The Nature of Complexity**\n"
+            "# **Chapter 2: The Shape of Coupling**\n"
         )
 
         assert outline(markdown) == [
             ("Chapter 1: Introduction", ["It's All About Complexity"]),
-            ("Chapter 2: The Nature of Complexity", []),
+            ("Chapter 2: The Shape of Coupling", []),
         ]
 
     def test_italic_and_underscore_wrappers_are_stripped(self) -> None:
@@ -128,19 +128,19 @@ class TestChapterNumberTitleMerging:
     def test_bold_number_and_title_pair_merge_into_one_chapter(self) -> None:
         markdown = (
             "# **Chapter 4**\n"
-            "# **Modules Should Be Deep**\n"
+            "# **Interfaces Should Be Narrow**\n"
             "body\n"
             "# **Chapter 5**\n"
             "# **Information Hiding**\n"
         )
 
         assert outline(markdown) == [
-            ("Chapter 4: Modules Should Be Deep", []),
+            ("Chapter 4: Interfaces Should Be Narrow", []),
             ("Chapter 5: Information Hiding", []),
         ]
 
     def test_merged_chapter_keeps_first_heading_source_line(self) -> None:
-        markdown = "# Chapter 4\n# Modules Should Be Deep\n# Chapter 5\n# Interfaces\n"
+        markdown = "# Chapter 4\n# Interfaces Should Be Narrow\n# Chapter 5\n# Interfaces\n"
 
         chapters = detect_structure(markdown)
 
@@ -172,10 +172,10 @@ class TestChapterNumberTitleMerging:
         assert outline(markdown) == [("Chapter 2", []), ("Epilogue", [])]
 
     def test_pair_separated_by_blank_line_still_merges(self) -> None:
-        markdown = "# Chapter 4\n\n# Modules Should Be Deep\n# Chapter 5\n\n# Interfaces\n"
+        markdown = "# Chapter 4\n\n# Interfaces Should Be Narrow\n# Chapter 5\n\n# Interfaces\n"
 
         assert outline(markdown) == [
-            ("Chapter 4: Modules Should Be Deep", []),
+            ("Chapter 4: Interfaces Should Be Narrow", []),
             ("Chapter 5: Interfaces", []),
         ]
 
@@ -190,14 +190,14 @@ class TestChapterNumberTitleMerging:
     def test_sections_after_merged_pair_attach_to_merged_chapter(self) -> None:
         markdown = (
             "# Chapter 4\n"
-            "# Modules Should Be Deep\n"
+            "# Interfaces Should Be Narrow\n"
             "## Abstractions\n"
             "# Chapter 5\n"
             "# Information Hiding\n"
         )
 
         assert outline(markdown) == [
-            ("Chapter 4: Modules Should Be Deep", ["Abstractions"]),
+            ("Chapter 4: Interfaces Should Be Narrow", ["Abstractions"]),
             ("Chapter 5: Information Hiding", []),
         ]
 
@@ -290,13 +290,13 @@ class TestRealisticEpubOutline:
             "# **Preface**",
         ]
         for number, title in enumerate(
-            ["Introduction", "The Nature of Complexity", "Working Code Isn't Enough"],
+            ["Introduction", "The Shape of Coupling", "Shipping Isn't Enough"],
             start=1,
         ):
             parts.append(f"# **Chapter {number}**")
             parts.append(f"# **{title}**")
             parts.append("Body prose for the chapter.")
-        parts.append("# **Summary of Design Principles**")
+        parts.append("# **Summary of the Rules**")
         parts.append("# **Index**")
         markdown = "\n".join(parts) + "\n"
 
@@ -308,9 +308,9 @@ class TestRealisticEpubOutline:
             ("Contents", "front_matter"),
             ("Preface", "front_matter"),
             ("Chapter 1: Introduction", "chapter"),
-            ("Chapter 2: The Nature of Complexity", "chapter"),
-            ("Chapter 3: Working Code Isn't Enough", "chapter"),
-            ("Summary of Design Principles", "chapter"),
+            ("Chapter 2: The Shape of Coupling", "chapter"),
+            ("Chapter 3: Shipping Isn't Enough", "chapter"),
+            ("Summary of the Rules", "chapter"),
             ("Index", "back_matter"),
         ]
         body_chapters = [c for c in chapters if c.kind == "chapter"]

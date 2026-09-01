@@ -15,7 +15,7 @@ from booksmart_core.extraction import (
 VALID_ITEM = {
     "type": "Principle",
     "title": "Deep modules",
-    "content": "Modules should be deep: simple interfaces over powerful functionality.",
+    "content": "Interfaces should be narrow: a small surface over powerful machinery.",
     "summary": "Prefer deep modules.",
     "confidence": 0.9,
     "section_index": 0,

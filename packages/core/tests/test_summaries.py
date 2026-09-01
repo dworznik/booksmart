@@ -7,7 +7,7 @@ import pytest
 from booksmart_core.summaries import SummaryError, parse_summary_response
 
 VALID = {
-    "chapter_summary": "Modules should be deep.",
+    "chapter_summary": "Interfaces should be narrow.",
     "section_summaries": ["About deep modules.", "About shallow modules."],
 }
 
@@ -18,7 +18,7 @@ class TestParseSummaryResponse:
             json.dumps(VALID), section_count=2
         )
 
-        assert chapter_summary == "Modules should be deep."
+        assert chapter_summary == "Interfaces should be narrow."
         assert section_summaries == ["About deep modules.", "About shallow modules."]
 
     def test_strips_markdown_code_fences(self) -> None:
@@ -26,7 +26,7 @@ class TestParseSummaryResponse:
 
         chapter_summary, _ = parse_summary_response(fenced, section_count=2)
 
-        assert chapter_summary == "Modules should be deep."
+        assert chapter_summary == "Interfaces should be narrow."
 
     def test_short_section_list_is_padded_with_none(self) -> None:
         payload = dict(VALID, section_summaries=["Only the first."])

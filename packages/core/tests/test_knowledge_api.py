@@ -18,7 +18,7 @@ CHAPTER_ONE_OBJECTS = [
     {
         "type": "Principle",
         "title": "Deep modules",
-        "content": "Modules should be deep.",
+        "content": "Interfaces should be narrow.",
         "summary": "Prefer deep modules.",
         "confidence": 0.9,
         "section_index": 0,
