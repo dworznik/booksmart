@@ -467,6 +467,38 @@ class TestTheDeclaredNavigation:
 
         assert heading_lines(markdown) == ["# Chapter One", "## A Section", "# Chapter Two"]
 
+    def test_a_nav_document_is_preferred_to_a_legacy_ncx(self, tmp_path: Path) -> None:
+        """EPUB 3 deprecated the NCX but reading systems kept wanting one, so a
+        book carrying both is the ordinary shape rather than a broken one. The
+        nav document is the version its author maintains; the NCX is what they
+        ship for readers that predate it, and it is the one more likely to have
+        gone stale. The titles differ here only so the assertion can say which
+        was read."""
+        path = build_epub(
+            tmp_path / "b.epub",
+            {"a.xhtml": self.CALIBRE},
+            nav=[("From The Nav Document", "a.xhtml#c1", [])],
+            ncx=[("From The NCX", "a.xhtml#c1", [])],
+        )
+
+        markdown, _ = extract(path)
+
+        assert heading_lines(markdown) == ["# From The Nav Document"]
+
+    def test_an_empty_nav_document_falls_through_to_the_ncx(self, tmp_path: Path) -> None:
+        """Preference is not exclusivity. A nav document declaring nothing is a
+        book that declared its tree once, in the older place."""
+        path = build_epub(
+            tmp_path / "b.epub",
+            {"a.xhtml": self.CALIBRE},
+            nav=[],
+            ncx=[("From The NCX", "a.xhtml#c1", [])],
+        )
+
+        markdown, _ = extract(path)
+
+        assert heading_lines(markdown) == ["# From The NCX"]
+
     def test_an_entry_with_no_fragment_heads_its_document(self, tmp_path: Path) -> None:
         """A book split one chapter to a file names the file and nothing finer."""
         path = build_epub(
