@@ -27,3 +27,6 @@ parser-out/
 # Agent worktrees: whole nested checkouts of this repo. Untracked and large,
 # and one `git add -A` from being committed into it.
 .claude/
+
+# MkDocs build output (`uv run mkdocs build`); CI rebuilds it from website/.
+/site/

@@ -43,6 +43,20 @@ writing a conventional subject is not one.
 
 Never commit directly to `main` — branch first, then open a PR.
 
+## Documentation: `website/` is published, `docs/` is not
+
+Two directories, and the boundary between them is the directory name — not an exclude list.
+
+- **`website/`** is the public documentation site. It is MkDocs' `docs_dir` (`mkdocs.yml`), and
+  every Markdown file in it is published to GitHub Pages on push to `main`.
+- **`docs/`** is **internal only** — ADRs, PRDs, research, api-notes, and agent config. It is never
+  published, and nothing in `mkdocs.yml` may point at it.
+
+So: never put internal material in `website/`, and never add a page under `docs/` expecting it to
+appear on the site. A published page that needs to cite an ADR links to it on GitHub.
+
+`uv run mkdocs serve` previews the site locally; `uv run mkdocs build --strict` is what CI runs.
+
 ## Agent skills
 
 ### Issue tracker

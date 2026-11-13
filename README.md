@@ -33,6 +33,7 @@ $ booksmart search all "how do deep modules reduce complexity"
 $ uv sync          # editable install of both packages
 $ uv run pytest    # the whole suite, SQLite by default
 $ uv run mypy      # strict, both packages
+$ uv run mkdocs serve   # the documentation site, from website/
 ```
 
 The core suite also runs against Postgres in CI; point
