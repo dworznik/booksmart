@@ -4,7 +4,8 @@
 `embeddings` Stage writes to it and [`search`](search.md) reads from it. The
 relational database and the filesystem remain the source of truth: the
 collection holds vectors, plus the payloads that link each point back to its
-row and its book.
+row and its book. A payload also carries a copy of the text that was embedded —
+for a passage, the book's own words — but never the only copy.
 
 Every point carries two vectors, a dense one and a sparse (BM25) one, and they
 are always written together. `VectorRecord` cannot be built with only one.

@@ -12,6 +12,12 @@ retrieval when cosine scores comparable across queries matter more than exact
 term matches. Which mode produced a result is carried on `SearchResults.mode`,
 because the two kinds of score are not on the same scale.
 
+A search that names no `record_types` covers chapters, sections and knowledge
+objects. **Passages** — the book's own text, embedded only when the
+`embed_passages` Preference is on — are searched when they are asked for by
+name: `record_types=["passage"]`, alone or beside the others. See
+[ADR 0005](https://github.com/dworznik/booksmart/blob/main/docs/adr/0005-passages-are-embedded-on-request-and-searched-by-name.md).
+
 Before any query is embedded, the collection's model lock is verified. A query
 embedded by one model and compared against another model's vectors returns
 plausible but wrong rankings, so a mismatch is refused rather than served.
