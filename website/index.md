@@ -1,4 +1,10 @@
-# Booksmart
+---
+title: Booksmart
+template: home.html
+hide:
+  - navigation
+  - toc
+---
 
 Booksmart turns books into queryable knowledge, locally. It ingests PDFs and
 EPUBs through a pipeline of **Stages** — parsing, structure, profile,
