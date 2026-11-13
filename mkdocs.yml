@@ -69,6 +69,10 @@ markdown_extensions:
   - pymdownx.highlight
   - pymdownx.superfences
 
+# Swaps the marker in cli.md for a reference rendered from the Typer app.
+hooks:
+  - hooks/cli_reference.py
+
 nav:
   - Home: index.md
   - Getting Started:
@@ -76,6 +80,7 @@ nav:
       - getting-started/installation.md
       - getting-started/quickstart.md
       - getting-started/configuration.md
+  - CLI reference: cli.md
   - API reference:
       - api/index.md
       - Stages: api/stages.md
