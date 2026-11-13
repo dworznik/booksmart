@@ -71,6 +71,11 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Getting Started:
+      - getting-started/index.md
+      - getting-started/installation.md
+      - getting-started/quickstart.md
+      - getting-started/configuration.md
   - API reference:
       - api/index.md
       - Stages: api/stages.md
