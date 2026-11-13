@@ -14,6 +14,8 @@ strict: true
 
 theme:
   name: material
+  # Template overrides. Only the landing page (website/index.md) selects one.
+  custom_dir: overrides
   features:
     - content.code.copy
     - navigation.instant
