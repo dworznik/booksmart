@@ -1,0 +1,41 @@
+site_name: Booksmart
+site_description: Turn books into queryable knowledge, locally.
+site_url: https://dworznik.github.io/booksmart/
+repo_url: https://github.com/dworznik/booksmart
+repo_name: dworznik/booksmart
+edit_uri: edit/main/website/
+
+# `website/` is published; `docs/` is internal (ADRs, PRDs, research, agent
+# config) and is never part of the site. See CLAUDE.md.
+docs_dir: website
+site_dir: site
+
+strict: true
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.instant
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
