@@ -29,13 +29,21 @@ from booksmart_core.extraction import (
     EXTRACTION_SYSTEM_PROMPT,
     ExtractionError,
     build_extraction_prompt,
+    describe_source,
     iter_chapter_bodies,
     parse_extraction_response,
     resolve_source,
 )
-from booksmart_core.llm import EmbeddingProvider, EmbeddingResponse, LLMProvider, LLMResponse
-from booksmart_core.models import Book, BookProfile, Chapter, KnowledgeObject, Section
+from booksmart_core.llm import (
+    EmbeddingProvider,
+    EmbeddingResponse,
+    LLMProvider,
+    LLMResponse,
+    embedding_batches,
+)
+from booksmart_core.models import Book, BookProfile, Chapter, KnowledgeObject, Passage, Section
 from booksmart_core.parsing import ExtractorRouter
+from booksmart_core.passages import cut_passages
 from booksmart_core.profile import PROFILE_PROMPT_VERSION, PROFILE_SYSTEM_PROMPT, build_profile_prompt
 from booksmart_core.storage import BookStorage
 from booksmart_core.structure import detect_structure
@@ -371,6 +379,34 @@ def run_summaries(
     return builder.finish()
 
 
+def _new_passages(
+    book: Book, chapters: list[Chapter], markdown: str
+) -> list[tuple[Passage, str]]:
+    """The book's passages as unsaved rows, each with the text it spans.
+
+    Unsaved on purpose: a passage row without its embedding columns is not a
+    row the schema accepts, and a session holding one would try to write it at
+    its next autoflush. The caller adds them once they are embedded. The id is
+    assigned here, rather than left to the column default, because the point's
+    payload names it before the row is ever flushed."""
+    return [
+        (
+            Passage(
+                id=uuid.uuid4(),
+                book_id=book.id,
+                chapter_id=span.chapter.id,
+                section_id=span.section.id if span.section is not None else None,
+                position=position,
+                start_char=span.start_char,
+                end_char=span.end_char,
+                source_location=describe_source(span.chapter, span.section),
+            ),
+            span.text,
+        )
+        for position, span in enumerate(cut_passages(chapters, markdown))
+    ]
+
+
 def run_embeddings(
     session: Session,
     book_id: uuid.UUID,
@@ -378,9 +414,24 @@ def run_embeddings(
     embedder: EmbeddingProvider,
     sparse_embedder: SparseEmbeddingProvider,
     vector_store: VectorStore,
+    storage: BookStorage | None = None,
+    embed_passages: bool = False,
 ) -> StageReport:
     """Embed chapter/section summaries and knowledge objects, store the vectors
     in Qdrant, and link each row via embedding_id.
+
+    With ``embed_passages`` — a Preference, off unless the caller turns it on —
+    the book's own text is embedded too: the parsed markdown is cut into
+    passages (``booksmart_core.passages``), each gets a row, and each row a
+    point. That happens here rather than in a Stage of its own because the rows
+    and the points are one output. This Stage already replaces a book's points
+    wholesale; cutting the passages in the same run, in the same transaction,
+    is what keeps every passage row matched by a point and every passage point
+    by a row (ADR 0002). It needs ``storage``, to read the markdown.
+
+    A book's passages are replaced on every run, including a run with the
+    Preference off, which leaves it with none — turning the Preference off and
+    re-running is how they are removed.
 
     Each record gets both vectors — a dense one from the provider and a sparse
     BM25 one computed locally — written together in a single upsert. They are
@@ -392,6 +443,13 @@ def run_embeddings(
     The sparse recipe is a property of the collection, not of the row: it is
     locked in collection metadata, and every point in the collection shares it
     by construction."""
+    if embed_passages and storage is None:
+        # A caller bug, not a state of the book: there is nothing to retry and
+        # no book that would make this call right.
+        raise ValueError(
+            "embed_passages needs storage to read the book's parsed markdown; "
+            "pass storage, or run the embeddings Stage without embed_passages"
+        )
     builder = _ReportBuilder("embeddings")
     book = _load_book(session, book_id)
     builder.log("embeddings: generating embeddings")
@@ -400,7 +458,7 @@ def run_embeddings(
         session.scalars(select(KnowledgeObject).where(KnowledgeObject.book_id == book.id))
     )
 
-    items: list[tuple[Chapter | Section | KnowledgeObject, RecordType, str]] = []
+    items: list[tuple[Chapter | Section | KnowledgeObject | Passage, RecordType, str]] = []
     for chapter in chapters:
         if chapter.summary:
             items.append((chapter, "chapter", chapter.summary))
@@ -417,6 +475,16 @@ def run_embeddings(
             )
         )
 
+    session.execute(delete(Passage).where(Passage.book_id == book.id))
+    passages: list[Passage] = []
+    if embed_passages:
+        assert storage is not None  # guarded at the top
+        for passage, text in _new_passages(book, chapters, _read_parsed_markdown(book, storage)):
+            passages.append(passage)
+            items.append((passage, "passage", text))
+        builder.counts["passages"] = len(passages)
+        builder.log(f"embeddings: {len(passages)} passages cut from {len(chapters)} chapters")
+
     if not items:
         vector_store.replace_book_points(
             str(book.id), [], embedder.model, sparse_embedder.recipe
@@ -428,9 +496,9 @@ def run_embeddings(
 
     texts = [text for _, _, text in items]
     embedded_vectors: list[list[float]] = []
-    # Batch size is the provider's Limit for its model, never a caller guess.
-    for start in range(0, len(texts), embedder.max_batch):
-        batch = texts[start : start + embedder.max_batch]
+    # Batches are cut to the provider's Limits for its model, never a caller
+    # guess.
+    for batch in embedding_batches(embedder, texts):
         response = embedder.embed(batch)
         embedded_vectors.extend(response.vectors)
         builder.log(f"embeddings: batch of {len(batch)} {builder.add_embedding_usage(response)}")
@@ -459,6 +527,7 @@ def run_embeddings(
                 },
             )
         )
+    session.add_all(passages)
     vector_store.replace_book_points(
         str(book.id), records, embedder.model, sparse_embedder.recipe
     )

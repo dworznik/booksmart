@@ -59,7 +59,8 @@ phrased differently, and by **words**, so an exact term or a proper noun still
 ranks even if the model never learned it. Results fuse both.
 
 - `--dense-only` — match by meaning alone.
-- `--type` — restrict to `chapter`, `section` or `knowledge_object`; repeatable.
+- `--type` — restrict to `chapter`, `section`, `knowledge_object` or `passage`;
+  repeatable.
 - `--limit` — how many hits.
 - `--score-threshold` — drop weak hits by similarity.
 
@@ -68,6 +69,28 @@ which you are looking at. With `--dense-only` it is a similarity between -1 and
 1. Fused, it measures how strongly both kinds of matching agreed, and only
 compares within one set of results — a fused `0.583` can be the best hit there
 is.
+
+### Searching the book's own words
+
+Out of the box, search covers what was written *about* a book — its chapter and
+section summaries and the ideas pulled out of it. It can find the chapter that
+discusses something and still miss the sentence that says it, and a term the
+book uses but no summary repeats is not there to be found.
+
+Passages close that gap: the text itself, cut into short windows and embedded
+beside everything else. They are opt-in, because a book has roughly ten times
+as much text as it has summary and embedding it costs accordingly:
+
+```console
+$ booksmart config set embed_passages true
+$ booksmart ingest <book-id> --scope embeddings    # books you already ingested
+$ booksmart search <book-id> "the exact phrase" --type passage
+```
+
+Passages are only searched when you name them with `--type passage` — alone, or
+beside other types (`--type passage --type section`). A search that names no
+type never returns one. Setting `embed_passages` back to `false` and re-running
+the embeddings scope removes a book's passages again.
 
 **Changing your embedding model means re-reading your books.** Search refuses to
 run against a collection built with a different model rather than return

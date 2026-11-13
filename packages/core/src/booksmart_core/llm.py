@@ -17,6 +17,7 @@ scarier name.
 """
 
 import logging
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import ClassVar, Protocol, TypeVar
 
@@ -81,6 +82,9 @@ class EmbeddingLimits:
 
     max_batch: int
     embedding_dimensions: int | None = None  # None means unknown
+    # The most tokens one request may carry, summed over all of its inputs.
+    # None means no cap is known, and batches are bounded by `max_batch` alone.
+    max_batch_tokens: int | None = None
 
 
 # Per-model Limits tables plus a conservative per-vendor default, so unknown
@@ -165,12 +169,28 @@ _GEMINI_LLM_LIMITS = {
 }
 _GEMINI_LLM_DEFAULT = LLMLimits(max_output_tokens=32000)
 
+# Both request caps are endpoint-wide facts, not per-model: 2048 inputs, and
+# 300,000 tokens summed across them. The second answers 400
+# (`max_tokens_per_request`) and is the one that binds once inputs are a few
+# hundred tokens each — a full batch of passages is more than twice over it.
+_OPENAI_MAX_BATCH = 2048
+_OPENAI_MAX_BATCH_TOKENS = 300_000
+
 _OPENAI_EMBEDDING_LIMITS = {
-    "text-embedding-3-small": EmbeddingLimits(max_batch=2048, embedding_dimensions=1536),
-    "text-embedding-3-large": EmbeddingLimits(max_batch=2048, embedding_dimensions=3072),
+    "text-embedding-3-small": EmbeddingLimits(
+        max_batch=_OPENAI_MAX_BATCH,
+        embedding_dimensions=1536,
+        max_batch_tokens=_OPENAI_MAX_BATCH_TOKENS,
+    ),
+    "text-embedding-3-large": EmbeddingLimits(
+        max_batch=_OPENAI_MAX_BATCH,
+        embedding_dimensions=3072,
+        max_batch_tokens=_OPENAI_MAX_BATCH_TOKENS,
+    ),
 }
-# 2048 inputs per request is an endpoint-wide fact, not per-model.
-_OPENAI_EMBEDDING_DEFAULT = EmbeddingLimits(max_batch=2048)
+_OPENAI_EMBEDDING_DEFAULT = EmbeddingLimits(
+    max_batch=_OPENAI_MAX_BATCH, max_batch_tokens=_OPENAI_MAX_BATCH_TOKENS
+)
 
 _GEMINI_EMBEDDING_LIMITS = {
     "gemini-embedding-001": EmbeddingLimits(max_batch=100, embedding_dimensions=3072),
@@ -381,6 +401,40 @@ class EmbeddingProvider(Protocol):
     def embed(self, texts: list[str]) -> EmbeddingResponse: ...
 
 
+def embedding_batches(embedder: EmbeddingProvider, texts: Sequence[str]) -> Iterator[list[str]]:
+    """``texts``, in order, as the batches the provider's Limits admit.
+
+    Every batch holds at most ``max_batch`` texts. Where the provider also
+    declares ``max_batch_tokens``, a batch is closed before it could exceed
+    that — measured in UTF-8 bytes, not tokens. No tokenizer emits a token
+    shorter than a byte, so a batch within the cap in bytes is within it in
+    tokens for any vendor, and nothing here has to know which tokenizer the
+    vendor runs or keep up with it. The price is batches a few times smaller
+    than the cap strictly allows, which costs requests, not money.
+
+    ``max_batch_tokens`` is read with a default rather than declared on the
+    Protocol because it is a Limit a provider may not have. A Protocol cannot
+    say "optionally", and requiring it would break every provider written
+    against the two attributes that were all there was.
+
+    A single text over the cap by itself still goes out, alone: there is no
+    batching that could admit it, and the vendor's refusal is the right error.
+    """
+    max_tokens: int | None = getattr(embedder, "max_batch_tokens", None)
+    batch: list[str] = []
+    size = 0
+    for text in texts:
+        weight = len(text.encode("utf-8"))
+        over_tokens = max_tokens is not None and size + weight > max_tokens
+        if batch and (len(batch) >= embedder.max_batch or over_tokens):
+            yield batch
+            batch, size = [], 0
+        batch.append(text)
+        size += weight
+    if batch:
+        yield batch
+
+
 class OpenAIEmbeddingProvider:
     _vendor: ClassVar[str] = "openai"
     _embedding_limits: ClassVar[dict[str, EmbeddingLimits]] = _OPENAI_EMBEDDING_LIMITS
@@ -398,6 +452,7 @@ class OpenAIEmbeddingProvider:
             self._vendor, model, self._embedding_limits, self._embedding_default_limits
         )
         self.max_batch = limits.max_batch
+        self.max_batch_tokens = limits.max_batch_tokens
         self.embedding_dimensions = limits.embedding_dimensions
         self._client = client or openai.OpenAI(api_key=api_key, base_url=base_url)
 

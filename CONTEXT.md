@@ -112,6 +112,16 @@ they are enforced live.
 
 ### Retrieval
 
+**Passage**:
+A window of the book's own text — a contiguous run of the parsed markdown, cut
+at paragraph boundaries inside one section and sized to about one idea. The
+only embedded record whose words are the book's rather than a model's account
+of them. Embedding passages is a Preference, off by default, and a search
+returns them only when it names them (ADR 0005).
+_Avoid_: chunk (it names the cutting, not the thing), snippet (that is the
+shortened text a result is displayed with), excerpt, paragraph (a passage is
+usually several)
+
 **Dense vector**:
 What an embedding Provider returns for a text: a fixed-size array of floats
 compared by cosine similarity. Carries meaning, not words — it matches a

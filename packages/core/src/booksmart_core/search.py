@@ -35,11 +35,17 @@ from sqlalchemy.orm import Session
 
 from booksmart_core.errors import ProviderConfigError
 from booksmart_core.llm import EmbeddingProvider
-from booksmart_core.models import Chapter, KnowledgeObject, Section
+from booksmart_core.models import Chapter, KnowledgeObject, Passage, Section
 from booksmart_core.sparse import SparseEmbeddingProvider
-from booksmart_core.vectors import RECORD_TYPES, RecordType, VectorStore, unknown_record_types
+from booksmart_core.vectors import (
+    DEFAULT_SEARCH_RECORD_TYPES,
+    RECORD_TYPES,
+    RecordType,
+    VectorStore,
+    unknown_record_types,
+)
 
-Record = Chapter | Section | KnowledgeObject
+Record = Chapter | Section | KnowledgeObject | Passage
 
 # How to retrieve. "hybrid" fuses dense and sparse retrieval with Reciprocal
 # Rank Fusion and is the default: it finds the paraphrases dense search is good
@@ -52,6 +58,7 @@ _RECORD_MODELS: dict[RecordType, type[Record]] = {
     "chapter": Chapter,
     "section": Section,
     "knowledge_object": KnowledgeObject,
+    "passage": Passage,
 }
 
 
@@ -143,6 +150,11 @@ def search(
     - **dense** is the pre-hybrid behaviour: scores are COSINE similarities and
       ``score_threshold`` keeps only hits scoring at least that much.
 
+    ``record_types`` narrows the search to those kinds of record. Left out, it
+    covers chapters, sections and knowledge objects and **not passages**
+    (``DEFAULT_SEARCH_RECORD_TYPES``): the book's own text is searched only when
+    asked for by name, alone or beside the others.
+
     Nothing embedded yet (no collection), or nothing matching the filters, is an
     empty result rather than an error — an un-ingested book is a normal state,
     not a failure.
@@ -229,19 +241,24 @@ def _validate_record_types(record_types: Sequence[RecordType] | None) -> None:
 
 def _build_filter(
     book_id: uuid.UUID | None, record_types: Sequence[RecordType] | None
-) -> qmodels.Filter | None:
+) -> qmodels.Filter:
     conditions: list[qmodels.Condition] = []
     if book_id is not None:
         conditions.append(
             qmodels.FieldCondition(key="book_id", match=qmodels.MatchValue(value=str(book_id)))
         )
-    if record_types:
-        conditions.append(
-            qmodels.FieldCondition(
-                key="record_type", match=qmodels.MatchAny(any=[str(name) for name in record_types])
-            )
+    # Always present, never "no filter means everything": the default set is a
+    # subset of what the collection can hold, so leaving the condition off
+    # would quietly widen an unqualified search to passages.
+    conditions.append(
+        qmodels.FieldCondition(
+            key="record_type",
+            match=qmodels.MatchAny(
+                any=[str(name) for name in record_types or DEFAULT_SEARCH_RECORD_TYPES]
+            ),
         )
-    return qmodels.Filter(must=conditions) if conditions else None
+    )
+    return qmodels.Filter(must=conditions)
 
 
 @dataclass(frozen=True)

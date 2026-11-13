@@ -397,3 +397,83 @@ def test_the_read_seam_reports_which_mode_produced_the_hits(
     assert hybrid.mode == "hybrid"
     assert dense.mode == "dense"
     assert dense.hits[0].score <= 1.0  # a cosine similarity
+
+
+# --- passages ----------------------------------------------------------------
+
+
+def _hit_types(output: str) -> list[str]:
+    return [m.group(1) for line in output.splitlines() if (m := _HIT_ROW.match(line))]
+
+
+def test_the_books_own_words_are_found_once_passages_are_enabled_and_asked_for(
+    runner: CliRunner,
+    home: Path,
+    tmp_path: Path,
+    make_pdf: Callable[..., Path],
+    add_book: Callable[..., str],
+    ingest_book: Callable[[str], None],
+) -> None:
+    """The whole opt-in path at the command surface: set the Preference, ingest,
+    then name the record type. The phrase searched for is in the book and in
+    nothing the fake pipeline wrote about it."""
+    enabled = runner.invoke(app, ["config", "set", "embed_passages", "true"])
+    assert enabled.exit_code == 0, enabled.output
+    book_id = add_book(make_pdf(tmp_path / "book.pdf"))
+    ingest_book(book_id)
+
+    code, out, err = search(runner, book_id, "ubiquitous language", "--type", "passage")
+
+    assert code == 0, err
+    assert set(_hit_types(out)) == {"passage"}
+    # The top hit is the chapter that says it, shown by where it sits and by
+    # its own words.
+    top = next(line for line in out.splitlines() if _HIT_ROW.match(line))
+    assert "chapter 1: Chapter One" in top
+    assert "Ubiquitous Language rules the domain" in top
+
+
+def test_passages_stay_out_of_a_search_that_does_not_name_them(
+    runner: CliRunner,
+    home: Path,
+    tmp_path: Path,
+    make_pdf: Callable[..., Path],
+    add_book: Callable[..., str],
+    ingest_book: Callable[[str], None],
+) -> None:
+    runner.invoke(app, ["config", "set", "embed_passages", "true"])
+    book_id = add_book(make_pdf(tmp_path / "book.pdf"))
+    ingest_book(book_id)
+
+    code, out, _ = search(runner, book_id, "ubiquitous language")
+
+    assert code == 0
+    assert _hit_types(out)
+    assert "passage" not in _hit_types(out)
+
+
+def test_no_passages_are_embedded_unless_the_preference_is_set(
+    runner: CliRunner,
+    home: Path,
+    tmp_path: Path,
+    make_pdf: Callable[..., Path],
+    add_book: Callable[..., str],
+    ingest_book: Callable[[str], None],
+) -> None:
+    book_id = add_book(make_pdf(tmp_path / "book.pdf"))
+    ingest_book(book_id)
+
+    code, out, _ = search(runner, book_id, "ubiquitous language", "--type", "passage")
+
+    assert code == 0
+    assert "No matches" in out
+    # The generic line would send the user off to re-ingest or rephrase; the
+    # real reason is a Preference, and the output names it.
+    assert "config set embed_passages true" in out
+
+
+def test_the_passage_preference_must_be_a_yes_or_a_no(runner: CliRunner, home: Path) -> None:
+    result = runner.invoke(app, ["config", "set", "embed_passages", "sometimes"])
+
+    assert result.exit_code == 1
+    assert "embed_passages" in result.stderr

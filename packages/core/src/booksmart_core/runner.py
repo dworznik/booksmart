@@ -184,6 +184,7 @@ def _dispatch(
     embedder: EmbeddingProvider | None,
     sparse_embedder: SparseEmbeddingProvider | None,
     vector_store: VectorStore | None,
+    embed_passages: bool,
 ) -> StageReport:
     if stage == "parse":
         return run_parse(session, book_id, router=router, storage=storage)
@@ -205,6 +206,8 @@ def _dispatch(
         embedder=embedder,
         sparse_embedder=sparse_embedder,
         vector_store=vector_store,
+        storage=storage,
+        embed_passages=embed_passages,
     )
 
 
@@ -219,11 +222,17 @@ def execute_run(
     embedder: EmbeddingProvider | None = None,
     sparse_embedder: SparseEmbeddingProvider | None = None,
     vector_store: VectorStore | None = None,
+    embed_passages: bool = False,
     on_stage: Callable[[Stage], None] | None = None,
 ) -> uuid.UUID:
     """Run a Scope over a book to completion, recording a Run. Returns the Run
     id; the Run's ``status`` reflects the outcome (this never raises for an
     expected Stage failure — the failure is recorded on the Run).
+
+    ``embed_passages`` is the passage Preference (``Settings.embed_passages``),
+    handed to the embeddings Stage of any Scope that has one. It is passed in
+    rather than read from ``Settings`` here for the reason the providers are:
+    the caller resolved its Preferences once, and this run uses those.
 
     ``on_stage`` is called with each Stage just before it runs, so a foreground
     Runner (the CLI) can stream progress; it never affects the outcome."""
@@ -269,6 +278,7 @@ def execute_run(
                         embedder,
                         sparse_embedder,
                         vector_store,
+                        embed_passages,
                     )
                 )
             current_stage = None

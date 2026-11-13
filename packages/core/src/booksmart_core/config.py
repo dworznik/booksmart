@@ -38,6 +38,15 @@ class Settings(BaseModel):
     # and locked into the collection, so drift is caught rather than configured.
     sparse_provider: str = "fastembed"
     sparse_model: str | None = None  # None -> the selected provider's default model
+    # Whether the embeddings Stage also embeds the book's own text, cut into
+    # passages, beside the summaries and knowledge objects it always embeds. Off
+    # by default: a book has roughly ten times as much text as it has summary,
+    # so this multiplies what an ingest spends on embedding by about that, and
+    # nobody should start paying it because they upgraded. Turning it on (or
+    # off) takes effect per book, the next time that book's embeddings Stage
+    # runs. Searching passages is a separate choice made per query — see
+    # ``booksmart_core.search``.
+    embed_passages: bool = False
     # API keys. Required (non-None) by the matching provider at construction;
     # there is no environment fallback — resolving keys is the caller's job.
     anthropic_api_key: str | None = None

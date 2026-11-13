@@ -2,8 +2,13 @@
 
 One collection holds every embedded record; payloads link each point back to
 its relational row (record_type + record_id) and its book. Postgres and the
-filesystem remain the source of truth - Qdrant only ever stores summaries and
-extracted content, never the sole copy of raw book text.
+filesystem remain the source of truth: Qdrant never holds the sole copy of
+anything. That used to be said more strongly — that it held summaries and
+extracted content and no raw book text at all — and passages end that on
+purpose. A passage point's payload carries the book's own words, because a
+search hit that had to go back to the filesystem for its text would not be a
+hit. What it carries is a copy; ``Book.parsed_path`` is still where the words
+live, and the collection can still be dropped and rebuilt from it (ADR 0005).
 
 Every point carries two vectors: a dense one from the embedding provider and a
 sparse (BM25) one computed client-side, the two halves hybrid retrieval fuses.
@@ -55,9 +60,27 @@ SPARSE_VECTOR_NAME = "text-sparse"
 # record_type + record_id. The payload is the only link back from a vector to
 # the source of truth, so this literal is the collection's contract — writers
 # (the embedding stage) and readers (search) both spell it from here.
-RecordType = Literal["chapter", "section", "knowledge_object"]
+RecordType = Literal["chapter", "section", "knowledge_object", "passage"]
 
 RECORD_TYPES: tuple[RecordType, ...] = get_args(RecordType)
+
+# What a search covers when the caller names no record types: what a model
+# wrote about the book, and not the book's own text. Passages are asked for by
+# name. They outnumber everything else in a book by roughly an order of
+# magnitude, so a search that included them unasked would return mostly
+# passages — a different product from the one a caller who never opted in has —
+# and whether that is the better default is a question for an eval, not for the
+# change that makes passages exist.
+DEFAULT_SEARCH_RECORD_TYPES: tuple[RecordType, ...] = ("chapter", "section", "knowledge_object")
+
+
+# How many points one upsert request carries. A Qdrant server bounds the size
+# of a request (32 MB unless reconfigured), and a point is mostly its dense
+# vector: a few tens of kilobytes as JSON at 3072 dimensions. A book's
+# summaries never came near that in one request. Its passages do — a long book
+# is thousands of points — so the write is split well inside the bound instead
+# of sized to it.
+UPSERT_BATCH = 256
 
 
 def unknown_record_types(names: Iterable[str]) -> list[str]:
@@ -232,26 +255,32 @@ class VectorStore:
         Both named vectors go in the same PointStruct. Qdrant reads an upsert as
         the complete set of named vectors for that point, so splitting them into
         two writes would leave a window where one is missing — and a rewrite that
-        named only one would delete the other outright."""
+        named only one would delete the other outright.
+
+        The upsert goes out ``UPSERT_BATCH`` points at a time. That does not
+        weaken the ordering above: stale points are still dropped only after
+        every new one is in, so a failure partway leaves the previous vectors
+        whole, plus some new points the next successful run sweeps up as stale."""
         book_filter = qmodels.FieldCondition(
             key="book_id", match=qmodels.MatchValue(value=book_id)
         )
         if records:
             self._ensure_collection(len(records[0].vector), embedding_model, sparse_recipe)
-            self.client.upsert(
-                self.collection,
-                points=[
-                    qmodels.PointStruct(
-                        id=record.id,
-                        vector={
-                            DENSE_VECTOR_NAME: record.vector,
-                            SPARSE_VECTOR_NAME: _sparse(record.sparse),
-                        },
-                        payload=record.payload,
-                    )
-                    for record in records
-                ],
-            )
+            for start in range(0, len(records), UPSERT_BATCH):
+                self.client.upsert(
+                    self.collection,
+                    points=[
+                        qmodels.PointStruct(
+                            id=record.id,
+                            vector={
+                                DENSE_VECTOR_NAME: record.vector,
+                                SPARSE_VECTOR_NAME: _sparse(record.sparse),
+                            },
+                            payload=record.payload,
+                        )
+                        for record in records[start : start + UPSERT_BATCH]
+                    ],
+                )
             stale = qmodels.Filter(
                 must=[book_filter],
                 must_not=[qmodels.HasIdCondition(has_id=[record.id for record in records])],

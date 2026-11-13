@@ -78,6 +78,20 @@ Each hit carries its rank, its score, and the database row it came from, so you
 can render a result without a second query. `results.embedding_tokens` reports
 what the query cost, when the provider says.
 
+By default a search covers what was written *about* a book: chapter and section
+summaries and knowledge objects. To search the book's own text as well, embed
+it — `execute_run(..., embed_passages=True)`, off by default because it embeds
+roughly ten times as much text per book — and then ask for it by name:
+
+```python
+results = search(..., record_types=["passage"])
+hit = results.hits[0]
+hit.text                               # the book's own words
+hit.row.start_char, hit.row.end_char   # where they sit in the parsed markdown
+```
+
+A search that names no record types never returns a passage.
+
 **A collection remembers the models it was built with**, and search refuses to
 run against a mismatch rather than return plausible, silently wrong rankings.
 Changing embedding model means re-embedding — which the library tells you,
@@ -87,5 +101,6 @@ instead of quietly degrading.
 
 Books, chapters and sections with generated summaries; knowledge objects — the
 principles, patterns and definitions a book teaches, each with the location it
-came from; and vectors for all of it. Everything is an ordinary SQLAlchemy row
+came from; optionally, passages — the book's own text in short windows; and
+vectors for all of it. Everything is an ordinary SQLAlchemy row
 you can query directly, on SQLite or Postgres, with migrations included.

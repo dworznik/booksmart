@@ -331,6 +331,20 @@ class TestEmbeddingLimitResolution:
         assert small.embedding_dimensions == 1536
         assert large.embedding_dimensions == 3072
 
+    def test_openai_caps_the_tokens_one_request_may_carry(self) -> None:
+        # Endpoint-wide, so it holds for a model the table has never heard of —
+        # which is the case where nothing else about the model is known.
+        known = OpenAIEmbeddingProvider(model="text-embedding-3-small", api_key="test")
+        unknown = OpenAIEmbeddingProvider(model="text-embedding-9", api_key="test")
+
+        assert known.max_batch_tokens == 300_000
+        assert unknown.max_batch_tokens == 300_000
+
+    def test_a_vendor_with_no_known_request_token_cap_declares_none(self) -> None:
+        provider = GeminiEmbeddingProvider(model="gemini-embedding-001", api_key="test")
+
+        assert provider.max_batch_tokens is None
+
     def test_known_gemini_model_resolves_batch_and_dimensions(self) -> None:
         provider = GeminiEmbeddingProvider(model="gemini-embedding-001", api_key="test")
 
