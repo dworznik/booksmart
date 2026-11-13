@@ -1,0 +1,82 @@
+{#-
+  The landing page. Selected by `template: home.html` in website/index.md and
+  used by no other page, so every documentation page keeps Material's standard
+  chrome. The hero spans the full width above the content grid; the page's own
+  Markdown still renders beneath it, with navigation and TOC hidden by the
+  page's front matter.
+-#}
+{% extends "base.html" %}
+
+{% block styles %}
+  {{ super() }}
+  <style>
+    .bs-hero {
+      background: var(--md-primary-fg-color);
+      color: var(--md-primary-bg-color);
+      padding: 3.5rem 0 3rem;
+    }
+    .bs-hero__inner { padding: 0 .8rem; max-width: 46rem; }
+    .bs-hero h1 {
+      margin: 0 0 .6rem;
+      font-size: 2.4rem;
+      font-weight: 700;
+      line-height: 1.2;
+      color: inherit;
+    }
+    .bs-hero__lede { margin: 0 0 1.6rem; font-size: 1rem; line-height: 1.6; opacity: .92; }
+    .bs-hero__install {
+      margin: 0 0 1.8rem;
+      padding: .7rem 1rem;
+      border-radius: .2rem;
+      background: rgba(0, 0, 0, .25);
+      font-family: var(--md-code-font-family);
+      font-size: .8rem;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    .bs-hero__actions { display: flex; flex-wrap: wrap; gap: .6rem; }
+    .bs-hero .md-button { color: var(--md-primary-bg-color); border-color: currentColor; margin: 0; }
+    .bs-hero .md-button--primary {
+      background: var(--md-primary-bg-color);
+      color: var(--md-primary-fg-color);
+      border-color: var(--md-primary-bg-color);
+    }
+    .bs-hero .md-button:hover, .bs-hero .md-button:focus {
+      background: var(--md-accent-fg-color);
+      border-color: var(--md-accent-fg-color);
+      color: var(--md-accent-bg-color);
+    }
+    @media screen and (max-width: 44.9375em) {
+      .bs-hero { padding: 2.2rem 0 2rem; }
+      .bs-hero h1 { font-size: 1.8rem; }
+    }
+  </style>
+{% endblock %}
+
+{% block hero %}
+  <section class="bs-hero" aria-labelledby="bs-hero-title">
+    <div class="md-grid">
+      <div class="bs-hero__inner">
+        <h1 id="bs-hero-title">{{ config.site_name }}</h1>
+        <p class="bs-hero__lede">
+          Turn books into queryable knowledge, locally. Booksmart ingests PDFs
+          and EPUBs through a pipeline of parsing, structure, extraction,
+          summaries and embeddings, then lets you search the result in plain
+          language. No Docker, no server.
+        </p>
+        <pre class="bs-hero__install"><code>uv tool install booksmart    # or: pipx install booksmart</code></pre>
+        <nav class="bs-hero__actions" aria-label="Documentation">
+          <a href="{{ 'getting-started/' | url }}" class="md-button md-button--primary">Getting Started</a>
+          <a href="{{ 'cli/' | url }}" class="md-button">CLI reference</a>
+          <a href="{{ 'api/' | url }}" class="md-button">API reference</a>
+        </nav>
+      </div>
+    </div>
+  </section>
+{% endblock %}
+
+{#- The hero carries the page's only <h1>, so skip the one Material would add
+    from the nav title, along with the edit-this-page action. -#}
+{% block content %}
+  {{ page.content }}
+{% endblock %}
