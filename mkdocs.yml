@@ -37,5 +37,10 @@ markdown_extensions:
   - pymdownx.highlight
   - pymdownx.superfences
 
+# Swaps the marker in cli.md for a reference rendered from the Typer app.
+hooks:
+  - hooks/cli_reference.py
+
 nav:
   - Home: index.md
+  - CLI reference: cli.md
