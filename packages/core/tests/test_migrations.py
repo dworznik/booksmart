@@ -24,6 +24,7 @@ EXPECTED_TABLES = {
     "knowledge_objects",
     "runs",
     "run_stages",
+    "passages",
 }
 
 

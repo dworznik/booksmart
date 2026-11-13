@@ -85,6 +85,7 @@ $ booksmart config list
 │ embedding_model      │ (unset)                               │                  │
 │ sparse_provider      │ fastembed                             │ default          │
 │ sparse_model         │ (unset)                               │                  │
+│ embed_passages       │ False                                 │ default          │
 │ anthropic_api_key    │ (unset)                               │                  │
 │ openai_api_key       │ (unset)                               │                  │
 │ gemini_api_key       │ AIza…xxxx                             │ conventional-env │
@@ -137,6 +138,7 @@ silently ignored.
 | `embedding_model` | the Provider's default | Which embedding model that Provider uses. |
 | `sparse_provider` | `fastembed` | Keyword (BM25) vectors, computed locally — no key needed. `fake` for tests. |
 | `sparse_model` | the Provider's default | Which sparse model to use. |
+| `embed_passages` | `false` | Whether an ingest also embeds the book's own text, cut into short passages, so search can return the words themselves. Off by default because it embeds roughly ten times as much text per book. Takes effect the next time a book's `embeddings` Stage runs; search passages with `--type passage`. |
 | `anthropic_api_key` | unset | Needed when `llm_provider` is `anthropic`. |
 | `openai_api_key` | unset | Needed when either Provider is `openai`. |
 | `gemini_api_key` | unset | Needed when either Provider is `gemini`. |

@@ -384,6 +384,7 @@ class StubEmbeddingProvider:
 
     def __init__(self) -> None:
         self.max_batch = 100  # a Limit in the real providers; overridable per test
+        self.max_batch_tokens: int | None = None  # likewise; None is "no known cap"
         self.batches: list[list[str]] = []
 
     def embed(self, texts: list[str]) -> EmbeddingResponse:

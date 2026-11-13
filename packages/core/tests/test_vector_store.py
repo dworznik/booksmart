@@ -315,3 +315,25 @@ def test_close_releases_the_store(store: VectorStore) -> None:
     write(store, make_records())
 
     store.close()
+
+
+class TestReplacingManyPoints:
+    def test_a_book_with_more_points_than_one_write_carries_is_replaced_whole(
+        self, store: VectorStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Passages take a book from a hundred points to thousands, and a Qdrant
+        server bounds the size of one request — so the write goes out in
+        several. Split or not, the outcome is the one a single write had: every
+        new point stored, every stale one gone."""
+        monkeypatch.setattr("booksmart_core.vectors.UPSERT_BATCH", 2)
+        write(store, make_records(count=5))
+        replacement = make_records(count=5)
+
+        write(store, replacement)
+
+        stored, _ = store.client.scroll(store.collection, limit=100, with_vectors=True)
+        assert {str(point.id) for point in stored} == {record.id for record in replacement}
+        # Both vectors arrived with every point, whichever write carried it.
+        for point in stored:
+            assert isinstance(point.vector, dict)
+            assert set(point.vector) == {DENSE_VECTOR_NAME, SPARSE_VECTOR_NAME}

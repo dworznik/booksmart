@@ -161,6 +161,20 @@ $ booksmart search all "why does Alice keep changing size"
 Other options: `--type chapter`, `--type section` or `--type knowledge_object`
 to restrict what comes back (repeatable), and `--limit` for how many hits.
 
+Everything search returns so far was written *about* the book: summaries and
+extracted knowledge. To search the book's own words as well, turn on
+[`embed_passages`](configuration.md#fields), re-run the `embeddings` Scope, and
+ask for passages by name:
+
+```console
+$ booksmart config set embed_passages true
+$ booksmart ingest <book-id> --scope embeddings
+$ booksmart search <book-id> "the exact phrase" --type passage
+```
+
+It is off by default because it embeds roughly ten times as much text per
+book, and a search that names no `--type` never returns a passage.
+
 ## 6. Look around
 
 The ingest left more behind than search vectors:

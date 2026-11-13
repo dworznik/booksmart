@@ -154,6 +154,52 @@ class KnowledgeObject(Base):
     )
 
 
+class Passage(Base):
+    """A window of a book's own text, embedded so a search can return the words
+    themselves rather than a summary of them.
+
+    Written by the embeddings Stage and replaced wholesale with the book's
+    vectors on every run of it, in the same transaction — a passage exists only
+    because it was embedded, which is why its embedding columns are not
+    nullable where a chapter's are.
+
+    The row holds where the passage is, never what it says: the text is
+    ``parsed_markdown[start_char:end_char]``, and ``Book.parsed_path`` stays the
+    one place a book's words live. The span cannot go stale against that file.
+    A re-parse is always followed by the structure Stage, which deletes the
+    book's chapters, and both structural foreign keys cascade."""
+
+    __tablename__ = "passages"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    book_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("books.id", ondelete="CASCADE"))
+    chapter_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("chapters.id", ondelete="CASCADE")
+    )
+    # NULL for text between a chapter's heading and its first section.
+    section_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sections.id", ondelete="CASCADE")
+    )
+    # Reading order within the book.
+    position: Mapped[int]
+    # Offsets into the parsed markdown as a Python string (code points, not
+    # bytes), end-exclusive.
+    start_char: Mapped[int]
+    end_char: Mapped[int]
+    # "chapter 3: Title > Section", frozen when the passage is cut — the same
+    # shape a knowledge object records, and the only name a passage has.
+    source_location: Mapped[str]
+    embedding_id: Mapped[uuid.UUID]
+    embedding_model: Mapped[str]
+    embedded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    @property
+    def title(self) -> str:
+        """What to call a passage where a record's title is wanted. It has none
+        of its own, so it is known by where it sits."""
+        return self.source_location
+
+
 class Run(Base):
     """The record of one pipeline execution over a book (CONTEXT.md: Run).
 

@@ -388,7 +388,13 @@ def search(
     query: Annotated[str, typer.Argument(help="What to look for, in plain language.")],
     type: Annotated[
         Optional[list[str]],
-        typer.Option(help="Restrict to a record type; repeatable."),
+        typer.Option(
+            help=(
+                "Restrict to a record type: chapter, section, knowledge_object or "
+                "passage; repeatable. Passages — the book's own text — are only "
+                "searched when named here."
+            )
+        ),
     ] = None,
     limit: Annotated[int, typer.Option(help="Maximum number of hits.")] = 10,
     dense_only: Annotated[
@@ -424,6 +430,10 @@ def search(
     compares within one set of results. `rank` is the position, and is what to
     read. Searches the embeddings an ingest produced, so a book has to be
     ingested before it can be found.
+
+    To search the book's own text rather than what was written about it, turn
+    on `embed_passages` (`booksmart config set embed_passages true`), re-run
+    `booksmart ingest <book> --scope embeddings`, and pass `--type passage`.
     """
     book_id = None if scope == SEARCH_SCOPE_ALL else _parse_uuid(scope)
     runtime = Runtime.load()
@@ -438,6 +448,14 @@ def search(
     )
     if not results.hits:
         console.print("No matches. Ingest a book first, or try a broader query.")
+        if type and "passage" in type and not runtime.settings.embed_passages:
+            # The likeliest reason by far, and one the generic line misleads
+            # about: the book may be ingested and the query fine.
+            console.print(
+                "[dim]Passages are not embedded unless embed_passages is on: "
+                "`booksmart config set embed_passages true`, then "
+                "`booksmart ingest <book> --scope embeddings`.[/dim]"
+            )
         return
 
     table = Table("rank", "score", "type", "title", "match")

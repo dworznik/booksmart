@@ -97,6 +97,7 @@ class Runtime:
                 embedder=embedder,
                 sparse_embedder=sparse_embedder,
                 vector_store=vector_store,
+                embed_passages=self.settings.embed_passages,
                 on_stage=on_stage,
             )
         finally:

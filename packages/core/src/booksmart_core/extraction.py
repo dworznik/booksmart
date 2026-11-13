@@ -158,10 +158,16 @@ def resolve_source(chapter: Chapter, section_index: int | None) -> tuple[Section
     section = None
     if section_index is not None and 0 <= section_index < len(chapter.sections):
         section = chapter.sections[section_index]
+    return section, describe_source(chapter, section)
+
+
+def describe_source(chapter: Chapter, section: Section | None) -> str:
+    """Where in the book something came from, for a person to read: the chapter,
+    and the section within it when there is one."""
     source_location = f"chapter {chapter.position + 1}: {chapter.title}"
     if section is not None:
         source_location += f" > {section.title}"
-    return section, source_location
+    return source_location
 
 
 def build_chapter_prompt(book: Book, chapter: Chapter, body: str, instruction: str) -> str:
